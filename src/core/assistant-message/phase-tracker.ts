@@ -89,6 +89,61 @@ export class PhaseTracker {
   private phases: PhaseState[] = [];
   private currentPhaseIndex = 0;
 
+  /** Save tracker progress to .cline/phase-checkpoint.json */
+  private async saveCheckpoint(): Promise<void> {
+    try {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {return};
+
+      const checkpointData = {
+        phases: this.phases,
+        currentPhaseIndex: this.currentPhaseIndex,
+        originalPrompt: this.originalPrompt,
+      };
+
+      const checkpointPath = vscode.Uri.joinPath(
+        workspaceFolder.uri,
+        '.cline',
+        'phase-checkpoint.json',
+      );
+      try {
+        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, '.cline'));
+      } catch {}
+      await vscode.workspace.fs.writeFile(
+        checkpointPath,
+        new Uint8Array(Buffer.from(JSON.stringify(checkpointData, null, 2))),
+      );
+    } catch (error) {
+      this.outputChannel.appendLine(`Error saving phase checkpoint: ${error}`);
+    }
+  }
+
+  /** Restore tracker progress from .cline/phase-checkpoint.json if present */
+  public static async fromCheckpoint(
+    controller: Controller,
+    outputChannel: vscode.OutputChannel,
+  ): Promise<PhaseTracker | undefined> {
+    try {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {return undefined};
+
+      const checkpointPath = vscode.Uri.joinPath(
+        workspaceFolder.uri,
+        '.cline',
+        'phase-checkpoint.json',
+      );
+      const data = await vscode.workspace.fs.readFile(checkpointPath);
+      const checkpoint = JSON.parse(data.toString());
+      const tracker = new PhaseTracker(checkpoint.originalPrompt, controller, outputChannel);
+      tracker['phases'] = checkpoint.phases;
+      tracker['currentPhaseIndex'] = checkpoint.currentPhaseIndex;
+      return tracker;
+    } catch (error) {
+      outputChannel.appendLine(`Error restoring phase checkpoint: ${error}`);
+      return undefined;
+    }
+  }
+
   /**
    * @param originalPrompt 사용자 원본 프롬프트 (Plan Mode 에 넘길 내용)
    */
@@ -122,6 +177,7 @@ export class PhaseTracker {
       });
     });
     this.outputChannel.appendLine(`PhaseTracker: ${parsedPhases.length} phases registered.`);
+    this.saveCheckpoint().catch(()=>{});
   }
 
   /** 
@@ -134,6 +190,7 @@ export class PhaseTracker {
       this.outputChannel.appendLine(
         `PhaseTracker: Phase ${phase.id} - Subtask #${subtaskIdx + 1} 완료`
       );
+      this.saveCheckpoint().catch(()=>{});
     }
   }
 
@@ -150,6 +207,7 @@ export class PhaseTracker {
     this.outputChannel.appendLine(
       `PhaseTracker: Phase ${phase.id} - ${phase.prompt} marked as completed`
     );
+    this.saveCheckpoint().catch(()=>{});
   }
 
   /** 

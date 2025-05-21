@@ -363,7 +363,7 @@ export class Task {
 				// getFolderSize.loose silently ignores errors
 				// returns # of bytes, size/1000/1000 = MB
 				taskDirSize = await getFolderSize.loose(taskDir)
-			} catch (error: unknown) {
+			} catch (error) {
 				console.error("Failed to get task directory size:", taskDir, error)
 			}
 			await this.updateTaskHistory({
@@ -956,79 +956,53 @@ export class Task {
 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
 		this.clineMessages = []
 		this.apiConversationHistory = []
+
 		await this.postStateToWebview()
+
+		// edit prompt for each phase
+		let phaseAwarePrompt: string
+		if (this.phaseTracker){
+			const phase = this.phaseTracker.currentPhase
+			phaseAwarePrompt = this.isPhaseRoot
+			? (task ?? "")
+			: this.buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
+		} else {
+			phaseAwarePrompt = task ?? ""
+		}
+
+		await this.say("text", phaseAwarePrompt, images)
+		this.isInitialized = true
+
+		const userBlocks: UserContent = [{
+			type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>`},
+			...formatResponse.imageBlocks(images),
+		]
 
 		// Plan phase
 		if (this.isPhaseRoot) {
-			const userBlocks: UserContent = []
-			if (task) {
-				userBlocks.push({ type: "text", text:`<task>\n${task}\n</task>` })
-			}
-			if (images && images.length > 0) {
-				userBlocks.push(...formatResponse.imageBlocks(images))
-			}
-
-			// Plan 모드: 한 번의 답변(assistantMessage)만 받아 Plan Phase 생성
 			const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 
-			// PhaseTracker 에 Plan 결과 추가
 			if (this.phaseTracker) {
 				const planSteps = parsePlanFromOutput(firstAssistantMessage)
-				// Plan 결과: Phase 2..N 등록
 				this.phaseTracker.addPhasesFromPlan(planSteps)
-				// Plan Phase(Phase1) 완료 표시
 				this.phaseTracker.markCurrentPhaseComplete()
 			}
 
-			// Plan 만 수행하고, Task 전체는 아직 끝나지 않았으므로
-      		// onTaskCompleted(모든 phase가 끝났다는 콜백)는 호출하지 않는다!
+			this.sidebarController.onTaskCompleted(this, firstAssistantMessage)
 			return
 		}
-		else {
-		// [일반 Phase 실행(2..N)]
-      	//   buildPhasePrompt 로 실제 프롬프트를 만들고
-      	//   initiateTaskLoop() 로 subtask 실행
-
 		
-		if (!this.phaseTracker) {
-			// 예외: phaseTracker 가 없으면 곤란
-			console.error("No phaseTracker found. Cannot proceed with execution phase.")
-			return
-		}
-
-		// 현재 Phase 가져오기
-		const phase = this.phaseTracker.currentPhase
-		// 프롬프트 생성
-		const phasePrompt = this.buildPhasePrompt(
-			phase,
-			this.phaseTracker.totalPhases,
-			this.phaseTracker.getOriginalPrompt()
-		)
-
-		// userBlocks: 현재 Phase 프롬프트 + images
-		const userBlocks: UserContent = [
-			{ type: "text", text: phasePrompt }
-		]
-		if (images && images.length > 0) {
-			userBlocks.push(...formatResponse.imageBlocks(images))
-		}
-
-
-		// (실행 Loop) → LLM과 도구 호출 주고받으며 Phase 수행
-		//   <attempt_completion> 이 나오면 Phase 종료
-		//   Phase 종료 시점에, 내부에서 
-		//   this.sidebarController.onTaskCompleted(this, summary)
-		//   이런 식으로 “현재 Phase 완수” 콜백을 보냄
 		await this.initiateTaskLoop(userBlocks)
 
-		// 여기서는 Phase가 끝난 뒤 호출되는 onTaskCompleted와 별도로
-		// 따로 처리하지 않고 return 만.
-		return
-		}
-	} catch (error: unknown) {
-		console.error("[startTask] error occurred:", error)
+		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
+		await this.initiateTaskLoop([
+			{
+				type: "text",
+				text: `<task>\n${task}\n</task>`,
+			},
+			...imageBlocks,
+		])
 	}
-		
 
 	private async resumeTaskFromHistory() {
 		try {
@@ -3738,7 +3712,10 @@ export class Task {
 									pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
 									if (phaseFinished && this.phaseTracker) {
 										this.phaseTracker.markCurrentPhaseComplete()
-										this.sidebarController.onTaskCompleted?.(this, result ?? "")
+										this.sidebarController.onPhaseCompleted?.(this, result ?? "")
+										if (this.phaseTracker.allPhasesCompleted()) {
+											this.sidebarController.onTaskCompleted?.(this, result ?? "")
+										}
 									}
 									break
 								}
@@ -3922,7 +3899,7 @@ export class Task {
 			}
 			return null
 		} finally {
-			this.isStreaming = false;
+			this.isStreaming = false;z
 		}
 
 		// If streaming was aborted, return null
@@ -4097,7 +4074,10 @@ Begin now.`;
 			this.phaseTracker.addPhasesFromPlan(remapped);
 			this.phaseTracker.markCurrentPhaseComplete();
 
-			this.sidebarController.onTaskCompleted?.(this, assistantMessage);
+			this.sidebarController.onPhaseCompleted?.(this, assistantMessage);
+			if (this.phaseTracker.allPhasesCompleted()) {
+				this.sidebarController.onTaskCompleted?.(this, assistantMessage);
+			}
 			return true;
 		}
 		return false;

@@ -406,7 +406,7 @@
 		"chai": "^4.3.10",
 		"chalk": "^5.3.0",
 		"esbuild": "^0.25.0",
-		"grpc-tools": "^1.13.0",
+		"grpc-tools": "1.11.3",
 		"husky": "^9.1.7",
 		"lint-staged": "^16.1.0",
 		"minimatch": "^3.0.3",

@@ -6,6 +6,18 @@ option java_multiple_files = true;
 
 import "common.proto";
 
+// Message for prompt refinement request
+message PromptRefinementRequest {
+  string prompt = 1;
+}
+
+// Message for prompt refinement response
+message PromptRefinementResponse {
+  string originalPrompt = 1;
+  string refinedPrompt = 2;
+  string explanation = 3;
+}
+
 // UiService provides methods for managing UI interactions
 service UiService {
   // Scrolls to a specific settings section in the settings view
@@ -16,4 +28,7 @@ service UiService {
   
   // Subscribe to addToInput events (when user adds content via context menu)
   rpc subscribeToAddToInput(EmptyRequest) returns (stream String);
+  
+  // Refines a prompt to improve task understanding and execution
+  rpc refinePrompt(PromptRefinementRequest) returns (PromptRefinementResponse);
 }

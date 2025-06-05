@@ -453,6 +453,16 @@ export const ChatRowContent = memo(
 							}}></span>,
 						<span style={{ color: normalColor, fontWeight: "bold" }}>Cline has a question:</span>,
 					]
+				case "ask_question":
+					return [
+						<span
+							className="codicon codicon-question"
+							style={{
+								color: normalColor,
+								marginBottom: "-1.5px",
+							}}></span>,
+						<span style={{ color: normalColor, fontWeight: "bold" }}>Cline has a question:</span>,
+					]
 				default:
 					return [null, null]
 			}
@@ -1677,6 +1687,21 @@ export const ChatRowContent = memo(
 							</WithCopyButton>
 						)
 					}
+					case "ask_question":
+						return (
+							<>
+								<div style={headerStyle}>
+									<span
+										className="codicon codicon-new-file"
+										style={{
+											color: normalColor,
+											marginBottom: "-1.5px",
+										}}></span>
+									<span style={{ color: normalColor, fontWeight: "bold" }}>Cline wants to start a new task:</span>
+								</div>
+								<NewTaskPreview context={message.text || ""} />
+							</>
+						)
 					default:
 						return null
 				}

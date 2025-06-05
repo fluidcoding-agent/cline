@@ -143,9 +143,7 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 					}
 					break
 				case "mistake_limit_reached":
-				case "ask_proceed":
-				case "ask_retry":
-				case "ask_check":
+				case "ask_question":
 				case "auto_approval_max_req_reached":
 				case "command_output":
 					// For proceed buttons, if there's input content, send it as a proper user message
@@ -256,9 +254,6 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				case "command":
 				case "tool":
 				case "browser_action_launch":
-				case "ask_proceed":
-				case "ask_retry":
-				case "ask_check":
 				case "use_mcp_server":
 					if (trimmedInput || (images && images.length > 0) || (files && files.length > 0)) {
 						await TaskServiceClient.askResponse(

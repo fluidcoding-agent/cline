@@ -27,16 +27,21 @@ import pWaitFor from "p-wait-for"
 import * as path from "path"
 import * as vscode from "vscode"
 import { ensureMcpServersDirectoryExists, ensureSettingsDirectoryExists, GlobalFileNames } from "../storage/disk"
-import { getAllExtensionState, getGlobalState, getWorkspaceState, storeSecret, updateGlobalState } from "../storage/state"
+import {
+	getAllExtensionState,
+	getGlobalState,
+	getWorkspaceState,
+	storeSecret,
+	updateGlobalState,
+	updateWorkspaceState,
+} from "../storage/state"
 import { Task } from "../task"
 import { handleGrpcRequest, handleGrpcRequestCancel } from "./grpc-handler"
 import { sendStateUpdate } from "./state/subscribeToState"
 import { sendAddToInputEvent } from "./ui/subscribeToAddToInput"
 import { sendMcpMarketplaceCatalogEvent } from "./mcp/subscribeToMcpMarketplaceCatalog"
 import { AuthService } from "@/services/auth/AuthService"
-import { ShowMessageRequest, ShowMessageType } from "@/shared/proto/host/window"
-import { getHostBridgeProvider } from "@/hosts/host-providers"
-import { PhaseTracker } from "../planning/phase-tracker"
+import { PhaseTracker } from "../assistant-message/phase-tracker"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -50,7 +55,7 @@ export class Controller {
 
 	private disposables: vscode.Disposable[] = []
 	task?: Task
-	public phaseTracker?: PhaseTracker
+	private phaseTracker?: PhaseTracker
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
@@ -58,6 +63,7 @@ export class Controller {
 	latestAnnouncementId = "june-25-2025_16:11:00" // update to some unique identifier when we add a new announcement
 
 	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
+	private phaseData: Map<string, any> = new Map()
 
 	constructor(
 		readonly context: vscode.ExtensionContext,
@@ -78,7 +84,7 @@ export class Controller {
 		)
 		this.accountService = ClineAccountService.getInstance()
 		this.authService = AuthService.getInstance(context)
-		this.authService.restoreRefreshTokenAndRetrieveAuthInfo()
+		this.authService.restoreAuthToken()
 
 		// Clean up legacy checkpoints
 		cleanupLegacyCheckpoints(this.context.globalStorageUri.fsPath, this.outputChannel).catch((error) => {
@@ -119,19 +125,9 @@ export class Controller {
 			await updateGlobalState(this.context, "userInfo", undefined)
 			await updateGlobalState(this.context, "apiProvider", "openrouter")
 			await this.postStateToWebview()
-			getHostBridgeProvider().windowClient.showMessage(
-				ShowMessageRequest.create({
-					type: ShowMessageType.INFORMATION,
-					message: "Successfully logged out of Cline",
-				}),
-			)
+			vscode.window.showInformationMessage("Successfully logged out of Cline")
 		} catch (error) {
-			getHostBridgeProvider().windowClient.showMessage(
-				ShowMessageRequest.create({
-					type: ShowMessageType.INFORMATION,
-					message: "Logout failed",
-				}),
-			)
+			vscode.window.showErrorMessage("Logout failed")
 		}
 	}
 
@@ -142,26 +138,10 @@ export class Controller {
 	/**
 	 * spawnNewTask - 현재 진행 중인 Task를 완전히 종료하고,
 	 * 새 task + 새 PhaseTracker를 생성한다.
-	 * @returns true if task was created, false if cancelled
 	 */
-	public async spawnNewTask(newPrompt?: string, images?: string[], files?: string[]): Promise<boolean> {
+	public async spawnNewTask(newPrompt?: string, images?: string[]) {
 		// initTask() already clears any existing task and phase tracker
-		const selection = await vscode.window.showInformationMessage(
-			"Planning 중 새로운 Task 생성 시 기존 Planning이 초기화 됩니다. \n 새로운 Task를 생성하시겠습니까?",
-			"Yes",
-			"No",
-		)
-		if (selection === "Yes") {
-			this.phaseTracker?.deleteCheckpoint()
-			this.phaseTracker?.deletePlanMD()
-			this.phaseTracker = undefined
-			await this.initTask(newPrompt, images, files)
-			return true
-		} else {
-			// 사용자가 'Cancel'을 선택했을 때 실행할 로직
-			vscode.window.showInformationMessage("새로운 Task 생성이 취소되었습니다.")
-			return false
-		}
+		await this.initTask(newPrompt, images)
 	}
 
 	async initTask(task?: string, images?: string[], files?: string[], historyItem?: HistoryItem) {
@@ -188,23 +168,32 @@ export class Controller {
 			...storedChatSettings, // Spread stored preferences (preferredLanguage, openAIReasoningEffort)
 			mode: currentMode, // Use mode from global state
 		}
+		// 1) phaseTracker 가 이미 있으면 재사용, 없으면 생성
+		let newTracker: PhaseTracker
+		if (historyItem) {
+			// 체크포인트에서 복원
+			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this, this.outputChannel)
+			if (trackerFromCheckpoint) {
+				newTracker = trackerFromCheckpoint
+			} else {
+				// Log error and notify user about checkpoint loading failure
+				const errorMsg = "Failed to load task checkpoint. Unable to restore previous state."
+				this.outputChannel.appendLine(errorMsg)
+				vscode.window.showErrorMessage(errorMsg)
+				throw new Error(errorMsg)
+			}
+		} else if (this.phaseTracker) {
+			// 이미 메모리에 있던 tracker 재사용
+			newTracker = this.phaseTracker
+		} else {
+			// 완전 신규
+			newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+		}
+		this.phaseTracker = newTracker
 
-		// Initialize PhaseTracker based on priority
-		const createTracker = () => new PhaseTracker("", "", {}, this)
-
-		// Attempt to restore from checkpoint, return null if failed
-		const restored = await createTracker()
-			.fromCheckpoint()
-			.catch(() => null)
-
-		// Create a new one if there is no restored tracker or if all phases are already completed
-		const tracker = !restored || restored.isAllComplete() ? createTracker() : restored
-
-		this.phaseTracker = tracker
-
-		// isPhaseRoot is only true when it's a "truly new task"
-		// It's false when restoring from checkpoint (historyItem) or reusing an existing tracker
-		const isPhaseRoot = !historyItem && !this.phaseTracker?.isRestored
+		// 2) isPhaseRoot 은 “진짜 새 작업”일 때만 true
+		//    체크포인트 복원(historyItem)이거나, 기존 tracker 재사용 시에는 false
+		const isPhaseRoot = !historyItem && !this.phaseTracker.rawPlanContent
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
@@ -234,6 +223,8 @@ export class Controller {
 			browserSettings,
 			chatSettings,
 			this,
+			this.outputChannel,
+			newTracker,
 			isPhaseRoot,
 			shellIntegrationTimeout,
 			terminalReuseEnabled ?? true,
@@ -513,7 +504,12 @@ export class Controller {
 
 	// Auth
 	public async validateAuthState(state: string | null): Promise<boolean> {
-		return state === this.authService.authNonce
+		const storedNonce = this.authService.authNonce
+		if (!state || state !== storedNonce) {
+			return false
+		}
+		this.authService.resetAuthNonce() // Clear the nonce after validation
+		return true
 	}
 
 	async handleAuthCallback(customToken: string, provider: string | null = null) {
@@ -539,12 +535,7 @@ export class Controller {
 			await this.postStateToWebview()
 		} catch (error) {
 			console.error("Failed to handle auth callback:", error)
-			getHostBridgeProvider().windowClient.showMessage(
-				ShowMessageRequest.create({
-					type: ShowMessageType.ERROR,
-					message: "Failed to log in to Cline",
-				}),
-			)
+			vscode.window.showErrorMessage("Failed to log in to Cline")
 			// Even on login failure, we preserve any existing tokens
 			// Only clear tokens on explicit logout
 		}
@@ -579,12 +570,7 @@ export class Controller {
 			console.error("Failed to fetch MCP marketplace:", error)
 			if (!silent) {
 				const errorMessage = error instanceof Error ? error.message : "Failed to fetch MCP marketplace"
-				getHostBridgeProvider().windowClient.showMessage(
-					ShowMessageRequest.create({
-						type: ShowMessageType.ERROR,
-						message: errorMessage,
-					}),
-				)
+				vscode.window.showErrorMessage(errorMessage)
 			}
 			return undefined
 		}
@@ -668,12 +654,7 @@ export class Controller {
 		} catch (error) {
 			console.error("Failed to handle cached MCP marketplace:", error)
 			const errorMessage = error instanceof Error ? error.message : "Failed to handle cached MCP marketplace"
-			getHostBridgeProvider().windowClient.showMessage(
-				ShowMessageRequest.create({
-					type: ShowMessageType.ERROR,
-					message: errorMessage,
-				}),
-			)
+			vscode.window.showErrorMessage(errorMessage)
 		}
 	}
 
@@ -964,10 +945,19 @@ export class Controller {
 		}
 		await this.task?.abortTask()
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
-		// this.phaseTracker = undefined // removes reference to it, so once promises end it will be garbage collected
-		if (this.phaseTracker?.isAllComplete()) {
-			this.phaseTracker?.deleteCheckpoint()
-			this.phaseTracker?.deletePlanMD()
+
+		try {
+			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+			if (workspaceFolder) {
+				const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoints.json")
+				try {
+					await vscode.workspace.fs.delete(checkpointPath, { recursive: false, useTrash: false })
+				} catch {
+					// Ignore errors, such as if file doesn't exist
+				}
+			}
+		} catch (e) {
+			console.error("Error clearing checkpoint file:", e)
 		}
 	}
 
@@ -1042,24 +1032,14 @@ export class Controller {
 			// Check if there's a workspace folder open
 			const cwd = await getCwd()
 			if (!cwd) {
-				getHostBridgeProvider().windowClient.showMessage(
-					ShowMessageRequest.create({
-						type: ShowMessageType.ERROR,
-						message: "No workspace folder open",
-					}),
-				)
+				vscode.window.showErrorMessage("No workspace folder open")
 				return
 			}
 
 			// Get the git diff
 			const gitDiff = await getWorkingState(cwd)
 			if (gitDiff === "No changes in working directory") {
-				getHostBridgeProvider().windowClient.showMessage(
-					ShowMessageRequest.create({
-						type: ShowMessageType.INFORMATION,
-						message: "No changes in workspace for commit message",
-					}),
-				)
+				vscode.window.showInformationMessage("No changes in workspace for commit message")
 				return
 			}
 
@@ -1126,82 +1106,47 @@ Commit message:`
 								if (api && api.repositories.length > 0) {
 									const repo = api.repositories[0]
 									repo.inputBox.value = commitMessage
-									const message = "Commit message generated and applied"
-									getHostBridgeProvider().windowClient.showMessage(
-										ShowMessageRequest.create({
-											type: ShowMessageType.INFORMATION,
-											message,
-										}),
-									)
+									vscode.window.showInformationMessage("Commit message generated and applied")
 								} else {
-									const message = "No Git repositories found"
-									getHostBridgeProvider().windowClient.showMessage(
-										ShowMessageRequest.create({
-											type: ShowMessageType.ERROR,
-											message,
-										}),
-									)
+									vscode.window.showErrorMessage("No Git repositories found")
 								}
 							} else {
-								const message = "Git extension not found"
-								getHostBridgeProvider().windowClient.showMessage(
-									ShowMessageRequest.create({
-										type: ShowMessageType.ERROR,
-										message,
-									}),
-								)
+								vscode.window.showErrorMessage("Git extension not found")
 							}
 						} else {
-							const message = "Failed to generate commit message"
-							getHostBridgeProvider().windowClient.showMessage(
-								ShowMessageRequest.create({
-									type: ShowMessageType.ERROR,
-									message,
-								}),
-							)
+							vscode.window.showErrorMessage("Failed to generate commit message")
 						}
 					} catch (innerError) {
 						const innerErrorMessage = innerError instanceof Error ? innerError.message : String(innerError)
-						getHostBridgeProvider().windowClient.showMessage(
-							ShowMessageRequest.create({
-								type: ShowMessageType.ERROR,
-								message: `Failed to generate commit message: ${innerErrorMessage}`,
-							}),
-						)
+						vscode.window.showErrorMessage(`Failed to generate commit message: ${innerErrorMessage}`)
 					}
 				},
 			)
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error)
-			getHostBridgeProvider().windowClient.showMessage(
-				ShowMessageRequest.create({
-					type: ShowMessageType.ERROR,
-					message: `Failed to generate commit message: ${errorMessage}`,
-				}),
-			)
+			vscode.window.showErrorMessage(`Failed to generate commit message: ${errorMessage}`)
 		}
 	}
 
-	public async onPhaseCompleted(): Promise<void> {
-		const tracker = this.task?.getPhaseTracker?.() || this.phaseTracker
+	public async onPhaseCompleted(task: Task, openNewTask: boolean = false): Promise<void> {
+		const tracker = task.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return
 		}
 
-		const currentIndex = tracker.currentPhaseIndex
-		const current = tracker.phaseStates[currentIndex]
-		if (!current.status || current.status === "in-progress") {
-			await tracker.completePhase(currentIndex)
-		}
-
 		if (tracker.hasNextPhase()) {
-			tracker.updatePhase()
-			await tracker.saveCheckpoint()
+			await tracker
+				.moveToNextPhase(openNewTask)
+				.catch((err: Error) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
+		}
+		if (tracker.isAllComplete()) {
+			await this.onTaskCompleted()
 		}
 	}
 
 	public async onTaskCompleted(): Promise<void> {
 		vscode.window.showInformationMessage("🎉 All phases finished!")
+		// this.say("🎉 All phases finished!")
 		this.phaseTracker = undefined // reset phase tracker
 	}
 
@@ -1210,8 +1155,12 @@ Commit message:`
 			this.phaseTaskCallbacks.set(phaseId, (result) => {
 				resolve(result)
 			})
-			this.initTask(phasePrompt)
+			this.spawnNewTask(phasePrompt)
 		})
+	}
+
+	public setPhaseData(phaseId: string, data: any): void {
+		this.phaseData.set(phaseId, data)
 	}
 
 	// dev

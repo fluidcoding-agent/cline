@@ -36,6 +36,7 @@ import { sendMcpMarketplaceCatalogEvent } from "./mcp/subscribeToMcpMarketplaceC
 import { AuthService } from "@/services/auth/AuthService"
 import { ShowMessageRequest, ShowMessageType } from "@/shared/proto/host/window"
 import { getHostBridgeProvider } from "@/hosts/host-providers"
+import { PhaseTracker } from "../assistant-message/phase-tracker"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -49,11 +50,15 @@ export class Controller {
 
 	private disposables: vscode.Disposable[] = []
 	task?: Task
+	private phaseTracker?: PhaseTracker
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
 	authService: AuthService
 	latestAnnouncementId = "june-25-2025_16:11:00" // update to some unique identifier when we add a new announcement
+
+	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
+	private phaseData: Map<string, any> = new Map()
 
 	constructor(
 		readonly context: vscode.ExtensionContext,
@@ -101,6 +106,8 @@ export class Controller {
 		}
 		this.workspaceTracker.dispose()
 		this.mcpHub.dispose()
+		this.outputChannel.appendLine("Disposed all disposables")
+		this.phaseTracker = undefined
 
 		console.error("Controller disposed")
 	}
@@ -133,6 +140,15 @@ export class Controller {
 		await updateGlobalState(this.context, "userInfo", info)
 	}
 
+	/**
+	 * spawnNewTask - 현재 진행 중인 Task를 완전히 종료하고,
+	 * 새 task + 새 PhaseTracker를 생성한다.
+	 */
+	public async spawnNewTask(newPrompt?: string, images?: string[]) {
+		// initTask() already clears any existing task and phase tracker
+		await this.initTask(newPrompt, images)
+	}
+
 	async initTask(task?: string, images?: string[], files?: string[], historyItem?: HistoryItem) {
 		await this.clearTask() // ensures that an existing task doesn't exist before starting a new one, although this shouldn't be possible since user must clear task before starting a new one
 		const {
@@ -157,6 +173,32 @@ export class Controller {
 			...storedChatSettings, // Spread stored preferences (preferredLanguage, openAIReasoningEffort)
 			mode: currentMode, // Use mode from global state
 		}
+		// 1) phaseTracker 가 이미 있으면 재사용, 없으면 생성
+		let newTracker: PhaseTracker
+		if (historyItem) {
+			// 체크포인트에서 복원
+			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this, this.outputChannel)
+			if (trackerFromCheckpoint) {
+				newTracker = trackerFromCheckpoint
+			} else {
+				// Log error and notify user about checkpoint loading failure
+				const errorMsg = "Failed to load task checkpoint. Unable to restore previous state."
+				this.outputChannel.appendLine(errorMsg)
+				vscode.window.showErrorMessage(errorMsg)
+				throw new Error(errorMsg)
+			}
+		} else if (this.phaseTracker) {
+			// 이미 메모리에 있던 tracker 재사용
+			newTracker = this.phaseTracker
+		} else {
+			// 완전 신규
+			newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+		}
+		this.phaseTracker = newTracker
+
+		// 2) isPhaseRoot 은 “진짜 새 작업”일 때만 true
+		//    체크포인트 복원(historyItem)이거나, 기존 tracker 재사용 시에는 false
+		const isPhaseRoot = !historyItem && !this.phaseTracker.rawPlanContent
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
@@ -185,6 +227,10 @@ export class Controller {
 			autoApprovalSettings,
 			browserSettings,
 			chatSettings,
+			this,
+			this.outputChannel,
+			newTracker,
+			isPhaseRoot,
 			shellIntegrationTimeout,
 			terminalReuseEnabled ?? true,
 			terminalOutputLineLimit ?? 500,
@@ -914,6 +960,20 @@ export class Controller {
 		}
 		await this.task?.abortTask()
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
+
+		try {
+			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+			if (workspaceFolder) {
+				const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoints.json")
+				try {
+					await vscode.workspace.fs.delete(checkpointPath, { recursive: false, useTrash: false })
+				} catch {
+					// Ignore errors, such as if file doesn't exist
+				}
+			}
+		} catch (e) {
+			console.error("Error clearing checkpoint file:", e)
+		}
 	}
 
 	// Caching mechanism to keep track of webview messages + API conversation history per provider instance
@@ -1126,4 +1186,41 @@ Commit message:`
 			)
 		}
 	}
+
+	public async onPhaseCompleted(task: Task, openNewTask: boolean = false): Promise<void> {
+		const tracker = task.getPhaseTracker?.() || this.phaseTracker
+		if (!tracker) {
+			return
+		}
+
+		if (tracker.hasNextPhase()) {
+			await tracker
+				.moveToNextPhase(openNewTask)
+				.catch((err: Error) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
+		}
+		if (tracker.isAllComplete()) {
+			await this.onTaskCompleted()
+		}
+	}
+
+	public async onTaskCompleted(): Promise<void> {
+		vscode.window.showInformationMessage("🎉 All phases finished!")
+		// this.say("🎉 All phases finished!")
+		this.phaseTracker = undefined // reset phase tracker
+	}
+
+	public async spawnPhaseTask(phasePrompt: string, phaseId: number): Promise<string> {
+		return new Promise((resolve) => {
+			this.phaseTaskCallbacks.set(phaseId, (result) => {
+				resolve(result)
+			})
+			this.spawnNewTask(phasePrompt)
+		})
+	}
+
+	public setPhaseData(phaseId: string, data: any): void {
+		this.phaseData.set(phaseId, data)
+	}
+
+	// dev
 }

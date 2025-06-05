@@ -26,6 +26,7 @@ function convertClineAskToProtoEnum(ask: AppClineAsk | undefined): ClineAsk | un
 		condense: ClineAsk.CONDENSE,
 		summarize_task: ClineAsk.SUMMARIZE_TASK,
 		report_bug: ClineAsk.REPORT_BUG,
+		ask_question: ClineAsk.ASK_QUESTION,
 	}
 
 	const result = mapping[ask]
@@ -60,6 +61,7 @@ function convertProtoEnumToClineAsk(ask: ClineAsk): AppClineAsk | undefined {
 		[ClineAsk.CONDENSE]: "condense",
 		[ClineAsk.SUMMARIZE_TASK]: "summarize_task",
 		[ClineAsk.REPORT_BUG]: "report_bug",
+		[ClineAsk.ASK_QUESTION]: "ask_question",
 	}
 
 	return mapping[ask]

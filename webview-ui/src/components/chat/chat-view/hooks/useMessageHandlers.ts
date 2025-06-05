@@ -117,6 +117,7 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				case "use_mcp_server":
 				case "resume_task":
 				case "mistake_limit_reached":
+				case "ask_question":
 				case "auto_approval_max_req_reached":
 					if (trimmedInput || (images && images.length > 0) || (files && files.length > 0)) {
 						await TaskServiceClient.askResponse(

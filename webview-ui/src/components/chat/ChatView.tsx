@@ -461,20 +461,20 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			if (hasContent) {
 				console.log("[ChatView] handleSendMessage - Sending message:", messageToSend)
 				
-				// Apply prompt refinement for new tasks if enabled
-				if (messages.length === 0 && autoApprovalSettings.actions.usePromptRefinement) {
-					try {
-						console.log("[ChatView] Applying prompt refinement...")
-						const refinedResult = await PromptRefinementService.refinePrompt(messageToSend)
-						if (refinedResult.refinedPrompt !== messageToSend) {
-							console.log("[ChatView] Prompt refined:", refinedResult)
-							messageToSend = refinedResult.refinedPrompt
-						}
-					} catch (error) {
-						console.error("[ChatView] Prompt refinement failed:", error)
-						// Continue with original prompt if refinement fails
-					}
-				}
+				// // Apply prompt refinement for new tasks if enabled
+				// if (messages.length === 0 && autoApprovalSettings.actions.usePromptRefinement) {
+				// 	try {
+				// 		console.log("[ChatView] Applying prompt refinement...")
+				// 		const refinedResult = await PromptRefinementService.refinePrompt(messageToSend)
+				// 		if (refinedResult.refinedPrompt !== messageToSend) {
+				// 			console.log("[ChatView] Prompt refined:", refinedResult)
+				// 			messageToSend = refinedResult.refinedPrompt
+				// 		}
+				// 	} catch (error) {
+				// 		console.error("[ChatView] Prompt refinement failed:", error)
+				// 		// Continue with original prompt if refinement fails
+				// 	}
+				// }
 
 				if (messages.length === 0) {
 					await TaskServiceClient.newTask({ text: messageToSend, images, files })

@@ -105,6 +105,8 @@ import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
 import { parseAssistantMessageV3 } from "../assistant-message/parse-assistant-message"
+import { getAllExtensionState } from "../storage/state"
+import { refinePrompt } from "./prompt-refinement"
 
 export const cwd =
 	vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
@@ -958,12 +960,55 @@ export class Task {
 
 		this.isInitialized = true
 
+		let finalTask = task
+
+		// Apply prompt refinement if enabled and task is provided
+		if (task && this.autoApprovalSettings.actions.usePromptRefinement) {
+			try {
+				console.log("[Task] Applying prompt refinement...")
+				let refinedResult = await refinePrompt(task, this.api)
+
+				if (refinedResult.needsMoreInfo) {
+					const question1 = {
+						question: refinedResult.followUpQuestions[0],
+						options: [],
+						selected: "",
+					} satisfies ClineAskQuestion
+
+					const question2 = {
+						question: refinedResult.followUpQuestions[1],
+						options: ["opt1", "opt2"],
+						// options: [],
+						selected: "",
+					} satisfies ClineAskQuestion
+
+					const questionList = [question1, question2]
+
+					// 2) Answer 저장
+					await this.askMoreQuestion(questionList)
+
+					// 3) Refine the prompt with the answers
+					for (const ques of questionList){
+						task += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
+						// await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
+					}
+
+					refinedResult = await refinePrompt(task, this.api)
+				}
+				finalTask = refinedResult.refinedPrompt
+				await this.say("text", `Refined prompt: \n${finalTask}`)
+			} catch (error) {
+				console.error("[Task] Prompt refinement failed:", error)
+				// Continue with original prompt if refinement fails
+			}
+		}
+
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 
 		let userContent: UserContent = [
 			{
 				type: "text",
-				text: `<task>\n${task}\n</task>`,
+				text: `<task>\n${finalTask}\n</task>`,
 			},
 			...imageBlocks,
 		]
@@ -979,6 +1024,25 @@ export class Task {
 		}
 
 		await this.initiateTaskLoop(userContent)
+	}
+
+	async askMoreQuestion(questionList: ClineAskQuestion[]): Promise<ClineAskQuestion[]>{
+		for (const ques of questionList){
+				const sharedMessage = {
+					question: ques.question,
+					options: ques.options,
+				} satisfies ClineAskQuestion
+
+				const {
+					text,
+					// images,
+					// files: followupFiles,
+				} = await this.ask("followup", JSON.stringify(sharedMessage), false)
+			
+				await this.say("text", `Here is the answer: ${text}`)
+				ques.selected = text
+		}
+		return questionList
 	}
 
 	private async resumeTaskFromHistory() {

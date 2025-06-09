@@ -113,7 +113,7 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
-import { PhaseTracker, parsePlanFromOutput } from "../assistant-message/phase-tracker"
+import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../assistant-message/phase-tracker"
 import { PROMPTS, buildPhasePrompt } from "../assistant-message/prompts"
 import { Controller } from "../controller"
 import { parse } from "node:path"
@@ -1021,13 +1021,14 @@ export class Task {
 	}
 
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+		// API 호출 대신 고정된 plan.txt 파일 사용
+		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
-		// Add planning phases to the PhaseTracker
-		const { rawPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
+		const { rawPlan, phases: planSteps } = await parsePlanFromFixedFile(this.context)
 		this.phaseTracker!.rawPlanContent = rawPlan
 		this.phaseTracker.addPhasesFromPlan(planSteps)
 

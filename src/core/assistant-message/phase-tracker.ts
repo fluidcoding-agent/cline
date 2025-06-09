@@ -147,20 +147,158 @@ function createPhasesFromMatches(
 }
 
 export function parsePlanFromOutput(raw: string): ParsedPlan {
+	console.log("[parsePlanFromOutput] Starting to parse plan content")
+	console.log("[parsePlanFromOutput] Raw content length:", raw.length)
+	console.log("[parsePlanFromOutput] First 200 chars:", raw.substring(0, 200))
+
 	const planRegex = /##\s*Phase\s*Plan\s*[\r\n]+([\s\S]*)$/im
 	const planMatch = planRegex.exec(raw)
 	if (!planMatch) {
+		console.error("[parsePlanFromOutput] No Phase Plan section found")
+		console.log("[parsePlanFromOutput] Raw content for debugging:", raw)
 		throw new Error("No Phase Plan section found in the input text")
 	}
 
 	const rawPlan = planMatch[1].trim()
+	console.log("[parsePlanFromOutput] Extracted plan content length:", rawPlan.length)
 
 	const phases = parsePhases(rawPlan)
+	console.log("[parsePlanFromOutput] Parsed phases count:", phases.length)
+
 	if (phases.length === 0) {
+		console.error("[parsePlanFromOutput] No phases found in the Phase Plan content")
+		console.log("[parsePlanFromOutput] Raw plan for debugging:", rawPlan)
 		throw new Error("No phases found in the Phase Plan content")
 	}
 
+	console.log("[parsePlanFromOutput] Successfully parsed plan with", phases.length, "phases")
 	return { rawPlan, phases }
+}
+
+// 새로운 함수: plan.txt 파일의 subtask 구조를 파싱
+export function parsePlanFromSubtaskFormat(raw: string): ParsedPlan {
+	console.log("[parsePlanFromSubtaskFormat] Starting to parse plan content from subtask format")
+	console.log("[parsePlanFromSubtaskFormat] Raw content length:", raw.length)
+
+	// subtask 블록들을 찾기
+	const subtaskRegex = /<subtask>([\s\S]*?)<\/subtask>/g
+	const subtaskMatches = []
+	let match
+
+	while ((match = subtaskRegex.exec(raw)) !== null) {
+		subtaskMatches.push(match[1])
+	}
+
+	console.log("[parsePlanFromSubtaskFormat] Found subtask blocks:", subtaskMatches.length)
+
+	if (subtaskMatches.length === 0) {
+		console.error("[parsePlanFromSubtaskFormat] No subtask blocks found")
+		console.log("[parsePlanFromSubtaskFormat] Raw content first 1000 chars:", raw.substring(0, 1000))
+		throw new Error("No subtask blocks found in the plan content")
+	}
+
+	// 각 subtask 블록을 Phase로 변환
+	const phases: Phase[] = []
+
+	subtaskMatches.forEach((subtaskContent, idx) => {
+		console.log(`[parsePlanFromSubtaskFormat] Processing subtask ${idx + 1}:`)
+
+		// number 추출
+		const numberMatch = subtaskContent.match(/<number>(.*?)<\/number>/)
+		const numberStr = numberMatch ? numberMatch[1].trim() : (idx + 1).toString()
+		console.log(`[parsePlanFromSubtaskFormat] Found number: ${numberStr}`)
+
+		// FINAL을 숫자로 변환
+		const phaseIndex = numberStr === "FINAL" ? subtaskMatches.length : parseInt(numberStr)
+		console.log(`[parsePlanFromSubtaskFormat] Phase index: ${phaseIndex}`)
+
+		// title 추출
+		const titleMatch = subtaskContent.match(/<title>(.*?)<\/title>/)
+		const title = titleMatch ? titleMatch[1].trim() : `Phase ${phaseIndex}`
+		console.log(`[parsePlanFromSubtaskFormat] Found title: ${title}`)
+
+		// description을 전체 내용으로 설정 (나중에 필요시 더 세분화 가능)
+		const description = subtaskContent.trim()
+
+		phases.push({
+			index: phaseIndex,
+			phase_prompt: description,
+			title: title,
+			description: description,
+			paths: [], // 빈 배열로 시작
+			subtasks: [], // 빈 배열로 시작 (실행 중에 동적으로 생성)
+			complete: false,
+		})
+
+		console.log(`[parsePlanFromSubtaskFormat] Successfully parsed phase ${phaseIndex}: ${title}`)
+	})
+
+	// index 기준으로 정렬
+	phases.sort((a, b) => a.index - b.index)
+
+	console.log("[parsePlanFromSubtaskFormat] Successfully parsed", phases.length, "phases")
+	phases.forEach((phase) => {
+		console.log(`[parsePlanFromSubtaskFormat] Phase ${phase.index}: ${phase.title}`)
+	})
+
+	return {
+		rawPlan: raw,
+		phases: phases,
+	}
+}
+
+// 새로운 함수: plan.txt 파일에서 고정된 플랜 로드
+export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionContext): Promise<ParsedPlan> {
+	console.log("[parsePlanFromFixedFile] Starting to load plan.txt file...")
+	console.log("[parsePlanFromFixedFile] Extension URI:", extensionContext.extensionUri.toString())
+
+	// 개발 환경에서 src 폴더를 먼저 시도
+	try {
+		const devPlanFileUri = vscode.Uri.joinPath(extensionContext.extensionUri, "src", "core", "assistant-message", "plan.txt")
+
+		console.log("[parsePlanFromFixedFile] Trying dev path:", devPlanFileUri.toString())
+		const planContentBytes = await vscode.workspace.fs.readFile(devPlanFileUri)
+		const planContent = new TextDecoder().decode(planContentBytes)
+
+		console.log("[parsePlanFromFixedFile] Successfully loaded plan.txt from dev path")
+		console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
+
+		// 새로운 subtask 형식으로 파싱
+		return parsePlanFromSubtaskFormat(planContent)
+	} catch (devError) {
+		console.warn("[parsePlanFromFixedFile] Dev path failed:", devError)
+
+		// 개발 환경에서 실패한 경우, 빌드된 extension 경로 시도
+		try {
+			const planFileUri = vscode.Uri.joinPath(
+				extensionContext.extensionUri,
+				"dist",
+				"core",
+				"assistant-message",
+				"plan.txt",
+			)
+
+			console.log("[parsePlanFromFixedFile] Trying dist path:", planFileUri.toString())
+			const planContentBytes = await vscode.workspace.fs.readFile(planFileUri)
+			const planContent = new TextDecoder().decode(planContentBytes)
+
+			console.log("[parsePlanFromFixedFile] Successfully loaded plan.txt from dist path")
+			console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
+
+			// 새로운 subtask 형식으로 파싱
+			return parsePlanFromSubtaskFormat(planContent)
+		} catch (distError) {
+			console.error("[parsePlanFromFixedFile] Both paths failed")
+			console.error("[parsePlanFromFixedFile] Dev error:", devError)
+			console.error("[parsePlanFromFixedFile] Dist error:", distError)
+
+			// 두 경로 모두 실패한 경우 기본 플랜 반환
+			return {
+				rawPlan: "고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요.",
+				phases: [],
+			}
+		}
+	}
 }
 
 export class PhaseTracker {

@@ -26,6 +26,7 @@ export async function refinePrompt(controller: Controller, request: PromptRefine
 		// Apply LLM-based prompt refinement
 		const refinedPrompt = await performLLMPromptRefinement(prompt, apiHandler, controller)
 
+		// 재질문 or refined prompt
 		return {
 			originalPrompt: prompt,
 			refinedPrompt: refinedPrompt.text,
@@ -41,10 +42,10 @@ export async function refinePrompt(controller: Controller, request: PromptRefine
 	}
 }
 
-interface RefinementResult {
-	text: string
-	explanation: string
-}
+// interface RefinementResult {
+// 	text: string
+// 	explanation: string
+// }
 
 async function performLLMPromptRefinement(
 	prompt: string,
@@ -104,16 +105,58 @@ async function performLLMPromptRefinement(
 		},
 	}
 
+	// Project Specification Format 정의
+	const projectSpecificationFormat = `
+	## Project Specification Format
+
+	Create a comprehensive project specification using the following structure:
+
+	### 📋 Project Overview
+	- **Project Name**: [Extracted or inferred project name]
+	- **Project Type**: [Type of web application (portfolio, e-commerce, blog, etc.)]
+	- **Target Audience**: [Who will use this application]
+	- **Project Goals**: [Main objectives and purpose]
+
+	### 🛠️ Technical Requirements
+	- **Preferred Technologies**: [Frontend frameworks, libraries, tools]
+	- **Architecture**: [Basic structure and approach]
+	- **Platform**: [Web, mobile-responsive, PWA, etc.]
+
+	### 🎨 Design Specifications
+	- **Design Style**: [Modern, minimalist, professional, etc.]
+	- **Color Scheme**: [Primary colors and theme]
+	- **UI/UX Preferences**: [Specific design patterns or inspirations]
+	- **Animations**: [Interaction and animation requirements]
+
+	### ⚡ Feature Requirements
+	- **Core Features**: [Essential functionality that must be included]
+	- **Additional Features**: [Nice-to-have features]
+	- **User Interactions**: [How users will interact with the application]
+
+	### 📄 Page Structure
+	- **Required Pages**: [List of necessary pages/sections]
+	- **Content Strategy**: [Type of content for each page]
+	- **Navigation**: [How users will move through the site]
+
+	### 🚀 Implementation Details
+	- **Development Approach**: [Step-by-step implementation strategy]
+	- **File Structure**: [Recommended project organization]
+	- **Best Practices**: [Coding standards and conventions to follow]
+
+	Use this format to create a clear, actionable specification that a developer can immediately use to build the project.`
+
 	const systemPrompt = `You are a web project specification assistant. Your task is to analyze user prompts for web project creation and extract information to fill predefined template slots.
 
 TEMPLATE STRUCTURE:
 ${JSON.stringify(webProjectTemplate, null, 2)}
 
+${projectSpecificationFormat}
+
 ANALYSIS TASK:
 1. Extract information from the user prompt that matches each template slot
 2. Identify which required slots are missing information
 3. For missing required slots, generate specific follow-up questions
-4. Create a refined prompt that fills available slots
+4. Create a refined prompt using the Project Specification Format above with all available information
 
 RESPONSE FORMAT:
 You must respond with a JSON object containing:
@@ -132,7 +175,7 @@ You must respond with a JSON object containing:
   "missingRequiredSlots": ["array of missing required slot names"],
   "followUpQuestions": ["array of specific questions for missing required slots"],
   "needsMoreInfo": boolean,
-  "refinedPrompt": "enhanced prompt with filled slots and clear project specification"
+  "refinedPrompt": "A comprehensive project specification following the Project Specification Format above, filled with extracted information and professional recommendations"
 }
 
 EXTRACTION GUIDELINES:
@@ -141,6 +184,14 @@ EXTRACTION GUIDELINES:
 - Don't invent information that isn't reasonably implied
 - For arrays, extract all relevant items mentioned
 - Normalize values to template-friendly formats
+
+REFINED PROMPT GUIDELINES:
+- Always use the Project Specification Format structure
+- Fill each section with relevant extracted information
+- Where information is missing, provide professional recommendations or common best practices
+- Make the specification detailed enough for immediate implementation
+- Include specific technical suggestions based on the project type
+- Ensure the format is consistent and professional
 
 QUESTION GENERATION RULES:
 - Ask specific, actionable questions for missing required slots
@@ -257,21 +308,3 @@ export function escapeNewlinesInJsonStrings(raw: string): string {
 
 	return result
 }
-
-/**
- * 사용 예제:
- *
- * // 기본 사용법
- * const result = await refinePrompt(controller, { prompt: "웹사이트 만들어줘" })
- *
- * // needsMoreInfo가 true인 경우, 질문 목록이 출력됩니다:
- * // "I need more information to create your web project. Please answer these questions:
- * //
- * // 1. 어떤 종류의 웹사이트를 만들고 싶으신가요?
- * // 2. 어떤 기능이 필요하신가요?
- * // 3. 어떤 디자인 스타일을 선호하시나요?
- * //
- * // Once you provide these details, I can create exactly what you need."
- *
- * // 사용자는 이 질문들에 답변하여 새로운 메시지를 보낼 수 있습니다.
- */

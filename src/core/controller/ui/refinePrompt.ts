@@ -3,6 +3,16 @@ import type { Controller } from "../index"
 import { buildApiHandler } from "../../../api"
 import { getAllExtensionState } from "../../storage/state"
 
+// 개선된 결과 인터페이스
+export interface EnhancedRefinementResult {
+	text: string
+	explanation: string
+	needsMoreInfo?: boolean
+	followUpQuestions?: string[]
+	extractedData?: any
+	isInteractiveComplete?: boolean
+}
+
 export async function refinePrompt(controller: Controller, request: PromptRefinementRequest): Promise<PromptRefinementResponse> {
 	const { prompt } = request
 
@@ -14,7 +24,7 @@ export async function refinePrompt(controller: Controller, request: PromptRefine
 		const apiHandler = buildApiHandler(apiConfiguration)
 
 		// Apply LLM-based prompt refinement
-		const refinedPrompt = await performLLMPromptRefinement(prompt, apiHandler)
+		const refinedPrompt = await performLLMPromptRefinement(prompt, apiHandler, controller)
 
 		return {
 			originalPrompt: prompt,
@@ -23,12 +33,10 @@ export async function refinePrompt(controller: Controller, request: PromptRefine
 		}
 	} catch (error) {
 		console.error("Error in prompt refinement:", error)
-		// Fallback to heuristic refinement if LLM fails
-		const fallbackRefinement = await performHeuristicPromptRefinement(prompt)
 		return {
 			originalPrompt: prompt,
-			refinedPrompt: fallbackRefinement.text,
-			explanation: `LLM refinement failed, using heuristic approach. ${fallbackRefinement.explanation}`,
+			refinedPrompt: prompt,
+			explanation: `LLM refinement failed.`,
 		}
 	}
 }
@@ -38,7 +46,11 @@ interface RefinementResult {
 	explanation: string
 }
 
-async function performLLMPromptRefinement(prompt: string, apiHandler: any): Promise<RefinementResult> {
+async function performLLMPromptRefinement(
+	prompt: string,
+	apiHandler: any,
+	controller: Controller,
+): Promise<EnhancedRefinementResult> {
 	// 웹 프로젝트 템플릿 (RAG를 통해 가져왔다고 가정)
 	const webProjectTemplate = {
 		name: "Modern Web Application Template",
@@ -168,24 +180,28 @@ Please extract available information, identify missing required elements, and ge
 		const analysisResult = JSON.parse(escapeNewlinesInJsonStrings(jsonMatch[0]))
 
 		if (analysisResult.needsMoreInfo && analysisResult.followUpQuestions?.length > 0) {
-			// Generate refined prompt with follow-up questions
-			const followUpText = analysisResult.followUpQuestions.join("\n")
-			const refinedPrompt = `${prompt}
-
-To create your web project, I need some additional information:
-
-${followUpText}
-
-Please provide these details so I can generate exactly what you need.`
+			// 단순히 followUpQuestions를 출력용 텍스트로 변환
+			const questionsText = analysisResult.followUpQuestions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n")
 
 			return {
-				text: refinedPrompt,
-				explanation: `Missing required information for web project template. Generated ${analysisResult.followUpQuestions.length} follow-up questions.`,
+				text: `I need more information to create your web project. Please answer these questions:
+
+${questionsText}
+
+Once you provide these details, I can create exactly what you need.`,
+				explanation: `Generated ${analysisResult.followUpQuestions.length} follow-up questions to gather missing information.`,
+				needsMoreInfo: true,
+				followUpQuestions: analysisResult.followUpQuestions,
+				extractedData: analysisResult.extractedData,
+				isInteractiveComplete: false,
 			}
 		} else if (analysisResult.refinedPrompt) {
 			return {
 				text: analysisResult.refinedPrompt,
 				explanation: "Successfully extracted template information and created detailed web project specification.",
+				needsMoreInfo: false,
+				extractedData: analysisResult.extractedData,
+				isInteractiveComplete: true,
 			}
 		} else {
 			// Fallback - create a basic enhanced prompt
@@ -198,6 +214,9 @@ Please provide these details so I can generate exactly what you need.`
 			return {
 				text: `Create a web project with the following specifications: ${filledSlots || prompt}`,
 				explanation: "Extracted available template information for web project creation.",
+				needsMoreInfo: false,
+				extractedData: analysisResult.extractedData,
+				isInteractiveComplete: true,
 			}
 		}
 	} catch (parseError) {
@@ -239,45 +258,20 @@ export function escapeNewlinesInJsonStrings(raw: string): string {
 	return result
 }
 
-async function performHeuristicPromptRefinement(prompt: string): Promise<RefinementResult> {
-	// Fallback heuristic implementation for when LLM fails
-	const trimmedPrompt = prompt.trim()
-
-	// Simple heuristics for prompt improvement
-	if (trimmedPrompt.length < 10) {
-		return {
-			text: `Please provide more details about: ${trimmedPrompt}. What specific functionality do you want to implement? What files or technologies should be involved?`,
-			explanation: "Added request for more details to improve task clarity.",
-		}
-	}
-
-	// Check if prompt lacks specific instructions
-	if (
-		!trimmedPrompt.includes("please") &&
-		!trimmedPrompt.includes("create") &&
-		!trimmedPrompt.includes("make") &&
-		!trimmedPrompt.includes("implement")
-	) {
-		return {
-			text: `Please ${trimmedPrompt}`,
-			explanation: "Added polite request format to improve task understanding.",
-		}
-	}
-
-	// Check for very vague requests
-	const vaguePhrases = ["fix", "improve", "update", "change"]
-	const hasVaguePhrase = vaguePhrases.some((phrase) => trimmedPrompt.toLowerCase().includes(phrase))
-
-	if (hasVaguePhrase && trimmedPrompt.length < 50) {
-		return {
-			text: `${trimmedPrompt}. Please provide specific details about what needs to be modified, what the expected behavior should be, and any relevant file locations or technologies.`,
-			explanation: "Added request for specific details to clarify vague request.",
-		}
-	}
-
-	// For well-structured prompts, return as-is
-	return {
-		text: trimmedPrompt,
-		explanation: "Prompt appears clear and actionable.",
-	}
-}
+/**
+ * 사용 예제:
+ *
+ * // 기본 사용법
+ * const result = await refinePrompt(controller, { prompt: "웹사이트 만들어줘" })
+ *
+ * // needsMoreInfo가 true인 경우, 질문 목록이 출력됩니다:
+ * // "I need more information to create your web project. Please answer these questions:
+ * //
+ * // 1. 어떤 종류의 웹사이트를 만들고 싶으신가요?
+ * // 2. 어떤 기능이 필요하신가요?
+ * // 3. 어떤 디자인 스타일을 선호하시나요?
+ * //
+ * // Once you provide these details, I can create exactly what you need."
+ *
+ * // 사용자는 이 질문들에 답변하여 새로운 메시지를 보낼 수 있습니다.
+ */

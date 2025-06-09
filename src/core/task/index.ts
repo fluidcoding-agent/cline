@@ -1008,6 +1008,29 @@ export class Task {
 			}
 		}
 
+		// Ask Question
+		// 1) Question 예시
+		const question1 = {
+			question: "질문 1",
+			options: [],
+		} satisfies ClineAskQuestion
+
+		const question2 = {
+			question: "질문 2",
+			options: ["opt1", "opt2"],
+		} satisfies ClineAskQuestion
+
+		const questionList = [question1, question2]
+
+		// 2) Answer 저장
+		await this.askMoreQuestion(questionList)
+
+		// 3) 결과 확인
+		for (const ques of questionList){
+			await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
+		}
+		
+
 		// Planning Phase
 		if (this.isPhaseRoot) {
 			await this.executePlanningPhase(userContent)
@@ -1097,6 +1120,25 @@ export class Task {
 			await this.saveCheckpoint()
 			return true
 		}
+	}
+
+	async askMoreQuestion(questionList: ClineAskQuestion[]): Promise<ClineAskQuestion[]>{
+		for (const ques of questionList){
+				const sharedMessage = {
+					question: ques.question,
+					options: ques.options,
+				} satisfies ClineAskQuestion
+
+				const {
+					text,
+					// images,
+					// files: followupFiles,
+				} = await this.ask("followup", JSON.stringify(sharedMessage), false)
+			
+				await this.say("text", `Here is the answer: ${text}`)
+				ques.selected = text
+		}
+		return questionList
 	}
 
 	private async resumeTaskFromHistory() {

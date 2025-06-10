@@ -1,11 +1,17 @@
 import { ApiHandler } from "@api/index"
 
+// 팔로우업 질문 인터페이스
+export interface FollowUpQuestion {
+	question: string
+	options: string[]
+}
+
 // 개선된 결과 인터페이스
 export interface EnhancedRefinementResult {
 	refinedPrompt: string
 	explanation: string
 	needsMoreInfo?: boolean
-	followUpQuestions?: string[]
+	followUpQuestions?: FollowUpQuestion[]
 	extractedData?: any
 	isInteractiveComplete?: boolean
 }
@@ -13,7 +19,7 @@ export interface EnhancedRefinementResult {
 export interface RefinedPromptResult {
 	refinedPrompt: string
 	needsMoreInfo: boolean
-	followUpQuestions: string[]
+	followUpQuestions: FollowUpQuestion[]
 	originalPrompt: string
 	explanation: string
 }
@@ -42,10 +48,7 @@ export async function refinePrompt(prompt: string, apiHandler: ApiHandler): Prom
 	}
 }
 
-async function performLLMPromptRefinement(
-	prompt: string,
-	apiHandler: ApiHandler,
-): Promise<EnhancedRefinementResult> {
+async function performLLMPromptRefinement(prompt: string, apiHandler: ApiHandler): Promise<EnhancedRefinementResult> {
 	// 웹 프로젝트 템플릿 (RAG를 통해 가져왔다고 가정)
 	const webProjectTemplate = {
 		name: "Modern Web Application Template",
@@ -59,7 +62,7 @@ async function performLLMPromptRefinement(
 			projectType: {
 				description: "Type of web application",
 				required: true,
-				options: ["portfolio", "e-commerce", "blog", "dashboard", "landing-page", "social-media"],
+				options: ["portfolio", "blog", "dashboard", "landing-page"],
 				examples: ["portfolio website", "online store", "personal blog"],
 			},
 			mainFeatures: {
@@ -99,7 +102,8 @@ async function performLLMPromptRefinement(
 		},
 	}
 
-	// Project Specification Format 정의
+	// 간소화된 Project Specification Format
+	// const projectSpecificationFormat = `Create a comprehensive project specification with: Project Overview, Technical Requirements, Design Specifications, Feature Requirements, Page Structure, and Implementation Details.`
 	const projectSpecificationFormat = `
 	## Project Specification Format
 
@@ -139,21 +143,21 @@ async function performLLMPromptRefinement(
 
 	Use this format to create a clear, actionable specification that a developer can immediately use to build the project.`
 
-	const systemPrompt = `You are a web project specification assistant. Your task is to analyze user prompts for web project creation and extract information to fill predefined template slots.
+
+	const systemPrompt = `You are a web project specification assistant. Extract information from user prompts and generate follow-up questions for missing required data.
 
 TEMPLATE STRUCTURE:
 ${JSON.stringify(webProjectTemplate, null, 2)}
 
 ${projectSpecificationFormat}
 
-ANALYSIS TASK:
-1. Extract information from the user prompt that matches each template slot
-2. Identify which required slots are missing information
-3. For missing required slots, generate specific follow-up questions
-4. Create a refined prompt using the Project Specification Format above with all available information
 
-RESPONSE FORMAT:
-You must respond with a JSON object containing:
+REQUIRED FIELDS: projectName, projectType, mainFeatures
+OPTIONAL FIELDS: designStyle, primaryColor, targetAudience, technologies, pages, animations
+
+CRITICAL: You must respond with COMPLETE, VALID JSON only. No truncation, no "...", no partial responses.
+
+RESPONSE FORMAT (COMPLETE THIS EXACT STRUCTURE):
 {
   "extractedData": {
     "projectName": "extracted value or null",
@@ -167,31 +171,22 @@ You must respond with a JSON object containing:
     "animations": "extracted value or null"
   },
   "missingRequiredSlots": ["array of missing required slot names"],
-  "followUpQuestions": ["array of specific questions for missing required slots"],
+  "followUpQuestions": [
+    {
+      "question": "Specific question text for missing required slot",
+      "options": ["Option 1", "Option 2", "Option 3", "Option 4"]
+    }
+  ],
   "needsMoreInfo": boolean,
   "refinedPrompt": "A comprehensive project specification following the Project Specification Format above, filled with extracted information and professional recommendations"
 }
 
-EXTRACTION GUIDELINES:
-- Be liberal in interpretation but conservative in assumption
-- Look for implicit information (e.g., "company website" implies professional design)
-- Don't invent information that isn't reasonably implied
-- For arrays, extract all relevant items mentioned
-- Normalize values to template-friendly formats
-
-REFINED PROMPT GUIDELINES:
-- Always use the Project Specification Format structure
-- Fill each section with relevant extracted information
-- Where information is missing, provide professional recommendations or common best practices
-- Make the specification detailed enough for immediate implementation
-- Include specific technical suggestions based on the project type
-- Ensure the format is consistent and professional
-
-QUESTION GENERATION RULES:
-- Ask specific, actionable questions for missing required slots
-- Provide examples in questions to guide user responses
-- Keep questions concise but informative
-- Focus on one concept per question`
+RULES:
+- Generate 3-4 realistic options for each follow-up question
+- Focus on projectName, projectType, mainFeatures if missing
+- Keep refinedPrompt concise but complete
+- NEVER use "..." or truncate any part of the JSON response
+- Always close all brackets and quotes properly`
 
 	const userMessage = `Analyze this web project request and extract template slot information:
 
@@ -225,13 +220,13 @@ Please extract available information, identify missing required elements, and ge
 		const analysisResult = JSON.parse(escapeNewlinesInJsonStrings(jsonMatch[0]))
 
 		return {
-				refinedPrompt: analysisResult.refinedPrompt || "",
-				followUpQuestions: analysisResult.followUpQuestions || [],
-				explanation: `Generated ${analysisResult.followUpQuestions.length} follow-up questions to gather missing information.`,
-				needsMoreInfo: true,
-				extractedData: analysisResult.extractedData,
-				isInteractiveComplete: false,
-			}
+			refinedPrompt: analysisResult.refinedPrompt || "",
+			followUpQuestions: analysisResult.followUpQuestions || [],
+			explanation: `Generated ${analysisResult.followUpQuestions.length} follow-up questions to gather missing information.`,
+			needsMoreInfo: true,
+			extractedData: analysisResult.extractedData,
+			isInteractiveComplete: false,
+		}
 	} catch (parseError) {
 		console.error("Error parsing LLM template analysis response:", parseError)
 		throw new Error("Failed to parse LLM response")
@@ -269,4 +264,4 @@ export function escapeNewlinesInJsonStrings(raw: string): string {
 	}
 
 	return result
-} 
+}

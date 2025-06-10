@@ -969,26 +969,17 @@ export class Task {
 				let refinedResult = await refinePrompt(task, this.api)
 
 				if (refinedResult.needsMoreInfo) {
-					const question1 = {
-						question: refinedResult.followUpQuestions[0],
-						options: [],
+					const questionList = refinedResult.followUpQuestions.map(followUpQ => ({
+						question: followUpQ.question,
+						options: followUpQ.options,
 						selected: "",
-					} satisfies ClineAskQuestion
-
-					const question2 = {
-						question: refinedResult.followUpQuestions[1],
-						options: ["opt1", "opt2"],
-						// options: [],
-						selected: "",
-					} satisfies ClineAskQuestion
-
-					const questionList = [question1, question2]
+					} satisfies ClineAskQuestion))
 
 					// 2) Answer 저장
 					await this.askMoreQuestion(questionList)
 
 					// 3) Refine the prompt with the answers
-					for (const ques of questionList){
+					for (const ques of questionList) {
 						task += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
 						// await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
 					}
@@ -1026,21 +1017,21 @@ export class Task {
 		await this.initiateTaskLoop(userContent)
 	}
 
-	async askMoreQuestion(questionList: ClineAskQuestion[]): Promise<ClineAskQuestion[]>{
-		for (const ques of questionList){
-				const sharedMessage = {
-					question: ques.question,
-					options: ques.options,
-				} satisfies ClineAskQuestion
+	async askMoreQuestion(questionList: ClineAskQuestion[]): Promise<ClineAskQuestion[]> {
+		for (const ques of questionList) {
+			const sharedMessage = {
+				question: ques.question,
+				options: ques.options,
+			} satisfies ClineAskQuestion
 
-				const {
-					text,
-					// images,
-					// files: followupFiles,
-				} = await this.ask("followup", JSON.stringify(sharedMessage), false)
-			
-				await this.say("text", `Here is the answer: ${text}`)
-				ques.selected = text
+			const {
+				text,
+				// images,
+				// files: followupFiles,
+			} = await this.ask("followup", JSON.stringify(sharedMessage), false)
+
+			await this.say("text", `Here is the answer: ${text}`)
+			ques.selected = text
 		}
 		return questionList
 	}

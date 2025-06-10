@@ -966,14 +966,41 @@ export class Task {
 		if (task && this.autoApprovalSettings.actions.usePromptRefinement) {
 			try {
 				console.log("[Task] Applying prompt refinement...")
+				await this.say(
+					"api_req_started",
+					JSON.stringify({
+						request: "Refining prompt...",
+					}),
+				)
+
+				const updatePromptRefinementStatus = (message: string) => {
+					const lastApiReqStartedIndex = findLastIndex(this.clineMessages, (m) => m.say === "api_req_started")
+					if (lastApiReqStartedIndex !== -1) {
+						const currentApiReqInfo: ClineApiReqInfo = JSON.parse(this.clineMessages[lastApiReqStartedIndex].text || "{}")
+						this.clineMessages[lastApiReqStartedIndex].text = JSON.stringify({
+							...currentApiReqInfo,
+							request: message,
+							cost: 0.001,
+						} satisfies ClineApiReqInfo)
+					}
+				}
+
 				let refinedResult = await refinePrompt(task, this.api)
 
+				updatePromptRefinementStatus("Prompt refinement completed")
+
+				// await this.saveClineMessagesAndUpdateHistory()
+				// await this.postStateToWebview()
+
 				if (refinedResult.needsMoreInfo) {
-					const questionList = refinedResult.followUpQuestions.map(followUpQ => ({
-						question: followUpQ.question,
-						options: followUpQ.options,
-						selected: "",
-					} satisfies ClineAskQuestion))
+					const questionList = refinedResult.followUpQuestions.map(
+						(followUpQ) =>
+							({
+								question: followUpQ.question,
+								options: followUpQ.options,
+								selected: "",
+							}) satisfies ClineAskQuestion,
+					)
 
 					// 2) Answer 저장
 					await this.askMoreQuestion(questionList)
@@ -984,7 +1011,16 @@ export class Task {
 						// await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
 					}
 
+					await this.say(
+						"api_req_started",
+						JSON.stringify({
+							request: "Refining prompt...",
+						}),
+					)
+
 					refinedResult = await refinePrompt(task, this.api)
+					// Update again after second refinement
+					updatePromptRefinementStatus("Prompt refinement completed")
 				}
 				finalTask = refinedResult.refinedPrompt
 				await this.say("text", `Refined prompt: \n${finalTask}`)

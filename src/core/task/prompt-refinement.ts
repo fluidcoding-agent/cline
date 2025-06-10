@@ -53,53 +53,57 @@ async function performLLMPromptRefinement(prompt: string, apiHandler: ApiHandler
 	const webProjectTemplate = {
 		name: "Modern Web Application Template",
 		description: "A template for creating modern web applications",
-		requiredSlots: {
+		slots: {
 			projectName: {
 				description: "Name of the project/application",
 				required: true,
-				examples: ["My Portfolio", "E-commerce Store", "Blog Website"],
+				// examples: ["My Portfolio", "E-commerce Store", "Blog Website"],
 			},
 			projectType: {
 				description: "Type of web application",
 				required: true,
 				options: ["portfolio", "blog", "dashboard", "landing-page"],
-				examples: ["portfolio website", "online store", "personal blog"],
+				// examples: ["portfolio website", "online store", "personal blog"],
 			},
 			mainFeatures: {
 				description: "Key features and functionality",
 				required: true,
-				examples: ["user authentication", "payment processing", "content management", "responsive design"],
+				// examples: ["user authentication", "payment processing", "content management", "responsive design"],
 			},
 			designStyle: {
 				description: "Visual design preferences",
-				required: false,
-				examples: ["modern", "minimalist", "colorful", "dark theme", "professional"],
+				required: true,
+				// examples: ["modern", "minimalist", "colorful", "dark theme", "professional"],
 			},
 			primaryColor: {
 				description: "Primary color scheme",
-				required: false,
-				examples: ["blue", "#3B82F6", "corporate blue", "warm colors"],
+				required: true,
+				// examples: ["blue", "#3B82F6", "corporate blue", "warm colors"],
 			},
 			targetAudience: {
 				description: "Target users or audience",
 				required: false,
-				examples: ["young professionals", "small businesses", "students", "general public"],
+				// examples: ["young professionals", "small businesses", "students", "general public"],
 			},
-		},
-		optionalSlots: {
 			technologies: {
 				description: "Preferred technologies or frameworks",
-				examples: ["React", "Vue.js", "Next.js", "Tailwind CSS"],
+				required: false,
+				// examples: ["React", "Vue.js", "Next.js", "Tailwind CSS"],
 			},
 			pages: {
 				description: "Specific pages or sections needed",
-				examples: ["home page", "about page", "contact form", "product catalog"],
+				required: false,
+				// examples: ["home page", "about page", "contact form", "product catalog"],
 			},
 			animations: {
 				description: "Animation or interaction preferences",
-				examples: ["smooth scrolling", "hover effects", "loading animations"],
+				required: false,
+				// examples: ["smooth scrolling", "hover effects", "loading animations"],
 			},
 		},
+		// optionalSlots: {
+
+		// },
 	}
 
 	// 간소화된 Project Specification Format
@@ -143,7 +147,6 @@ async function performLLMPromptRefinement(prompt: string, apiHandler: ApiHandler
 
 	Use this format to create a clear, actionable specification that a developer can immediately use to build the project.`
 
-
 	const systemPrompt = `You are a web project specification assistant. Extract information from user prompts and generate follow-up questions for missing required data.
 
 TEMPLATE STRUCTURE:
@@ -152,8 +155,8 @@ ${JSON.stringify(webProjectTemplate, null, 2)}
 ${projectSpecificationFormat}
 
 
-REQUIRED FIELDS: projectName, projectType, mainFeatures
-OPTIONAL FIELDS: designStyle, primaryColor, targetAudience, technologies, pages, animations
+REQUIRED FIELDS: projectName, projectType, mainFeatures, designStyle, primaryColor
+OPTIONAL FIELDS: targetAudience, technologies, pages, animations
 
 CRITICAL: You must respond with COMPLETE, VALID JSON only. No truncation, no "...", no partial responses.
 

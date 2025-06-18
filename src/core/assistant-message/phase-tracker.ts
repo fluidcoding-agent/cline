@@ -299,9 +299,6 @@ export class PhaseTracker {
 				nextPhasePrompt = buildPhasePrompt(nextPhase, this.totalPhases, this.getOriginalPrompt())
 			}
 			await this.controller.spawnPhaseTask(nextPhasePrompt, next.index)
-		} else {
-			await this.controller.postStateToWebview()
-			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput" })
 		}
 	}
 

@@ -273,7 +273,6 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 							// setSecondaryButtonText(undefined)
 							break
 						case "ask_question":
-							setClineAsk("ask_question")
 							setEnableButtons(true)
 							setPrimaryButtonText("Proceed")
 							break

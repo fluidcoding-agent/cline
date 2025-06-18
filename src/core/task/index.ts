@@ -80,8 +80,10 @@ import { showChangedFilesDiff } from "./multifile-diff"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
-import { PhaseTracker, parsePlanFromOutput } from "../assistant-message/phase-tracker"
-import { PROMPTS, buildPhasePrompt } from "../assistant-message/prompts"
+import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../planning/phase-tracker"
+import { buildPhasePrompt } from "../planning/build_prompt"
+import { PROMPTS } from "../planning/planning_prompt"
+
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
@@ -385,6 +387,26 @@ export class Task {
 		if (maxRequestsChanged) {
 			this.taskState.consecutiveAutoApprovedRequestsCount = 0
 		}
+	}
+
+	// Create a temporary API handler with a specific model
+	private createTemporaryApiHandler(modelName: string): ApiHandler {
+		// Copy the current API configuration directly from this.api
+		// We need to maintain the original API's configuration and just change the model
+		const currentApi = this.api
+
+		// Create a new configuration with the specified model
+		// Get apiProvider and other properties directly from the original API
+		const tempConfig: ApiConfiguration = {
+			...(currentApi as any).options, // Directly access the options property if it exists
+			apiProvider: (currentApi as any).options?.apiProvider,
+			apiKey: (currentApi as any).options?.apiKey,
+			apiModelId: modelName, // Override with the requested model
+			taskId: this.taskId, // Ensure task ID is preserved
+		}
+
+		// Build and return the temporary API handler
+		return buildApiHandler(tempConfig, this.mode)
 	}
 
 	async restoreCheckpoint(messageTs: number, restoreType: ClineCheckpointRestore, offset?: number) {
@@ -946,14 +968,14 @@ export class Task {
 		await this.postStateToWebview()
 
 		let phaseAwarePrompt: string
-		if (this.phaseTracker) {
-			const phase = this.phaseTracker.currentPhase
-			phaseAwarePrompt = this.isPhaseRoot
-				? (task ?? "")
-				: buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
-		} else {
-			phaseAwarePrompt = task ?? ""
-		}
+		phaseAwarePrompt =
+			this.phaseTracker && !this.isPhaseRoot
+				? buildPhasePrompt(
+						this.phaseTracker.currentPhase,
+						this.phaseTracker.totalPhases,
+						this.phaseTracker.getProjectOverview(),
+					)
+				: (task ?? "")
 
 		await this.say("text", task, images, files)
 		this.taskState.isInitialized = true
@@ -965,7 +987,7 @@ export class Task {
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		}
-		if (files && files.length > 0) {
+		if (files?.length) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
 				userContent.push({
@@ -978,6 +1000,7 @@ export class Task {
 		// Planning Phase
 		if (this.isPhaseRoot) {
 			await this.executePlanningPhase(userContent)
+			// await this.executePlanningPhase(phaseAwarePrompt)
 		}
 
 		// Execution Phase
@@ -985,17 +1008,22 @@ export class Task {
 	}
 
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
-		// Add planning phases to the PhaseTracker
-		const { rawPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
-		this.phaseTracker!.rawPlanContent = rawPlan
+		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
+		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
+		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(firstAssistantMessage)
+		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
+		this.phaseTracker!.projOverview = projOverview
+		this.phaseTracker!.executionPlan = executionPlan
+		this.phaseTracker!.requirements = requirements
 		this.phaseTracker.addPhasesFromPlan(planSteps)
 
-		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
+		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 
 		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
 		if (!approved) {
@@ -1007,7 +1035,7 @@ export class Task {
 		this.isPhaseRoot = false
 
 		// Mark the first phase as complete
-		this.phaseTracker.markCurrentPhaseComplete(undefined)
+		this.phaseTracker.markCurrentPhaseComplete()
 		this.sidebarController.onPhaseCompleted(this)
 
 		// Start execution of the first phase
@@ -1019,26 +1047,25 @@ export class Task {
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
+		while (!this.phaseTracker!.isAllComplete()) {
+			const phase = this.phaseTracker.currentPhase
+			const total = this.phaseTracker.totalPhases
+			const phaseIndex = this.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
 
-		const phase = this.phaseTracker.currentPhase
-		const total = this.phaseTracker.totalPhases
-		const phaseIndex = this.phaseTracker.currentPhaseIndex
-		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getOriginalPrompt())
-		if (!this.newPhaseOpened) {
-			await this.sidebarController.spawnPhaseTask(currentPhasePrompt, phaseIndex)
-		} else {
-			this.isPhaseRoot = false
-			await this.runSinglePhase(phaseIndex, currentPhasePrompt)
+			if (!this.newPhaseOpened) {
+				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
+			} else {
+				this.isPhaseRoot = false
+				await this.runSinglePhase(prompt)
+			}
+			this.newPhaseOpened = false
 		}
-		this.newPhaseOpened = false
-		if (this.phaseTracker.isAllComplete()) {
-			await this.say("text", "All phases completed successfully!")
-			this.sidebarController.onTaskCompleted()
-		}
-		this.executeCurrentPhase()
+		await this.say("text", "All phases completed successfully!")
+		this.sidebarController.onTaskCompleted()
 	}
 
-	public async runSinglePhase(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
+	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
@@ -1047,12 +1074,7 @@ export class Task {
 
 		const phaseFinished = await this.initiateTaskLoop(userBlocks)
 		if (phaseFinished) {
-			const id = 0
-			this.phaseTracker.completeSubtask(phaseIndex, id)
-		}
-
-		if (phaseFinished) {
-			this.sidebarController.onPhaseCompleted(this)
+			this.sidebarController.onTaskCompleted()
 		}
 	}
 
@@ -1302,13 +1324,49 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
 		let assistantText = ""
+		const start = performance.now()
+
+		// Create a partial message for streaming updates
+		await this.say("text", "Planning in progress...", undefined, undefined, true)
+
+		// Track progress
+		let totalChunks = 0
+		let lastUpdateTime = Date.now()
+		const updateInterval = 250 // Update UI every 250ms to avoid too many updates
+
+		// Process stream chunks and update UI with thinking progress
 		for await (const chunk of firstStream) {
 			if (chunk.type === "text") {
 				assistantText += chunk.text
+				totalChunks++
+
+				// Update UI periodically to show progress without overwhelming it
+				const now = Date.now()
+				if (now - lastUpdateTime > updateInterval) {
+					// Update progress message with latest thinking content
+					// Using the partial flag to indicate this is a progressive update
+					await this.say(
+						"reasoning",
+						`Planning in progress... (${(now - start) / 1000}s)\n\n${assistantText.slice(-500)}`,
+						undefined,
+						undefined,
+						true,
+					)
+					lastUpdateTime = now
+				}
 			}
 		}
+
+		// Finalize the partial message
+		await this.say(
+			"text",
+			`Plan generated in ${((performance.now() - start) / 1000).toFixed(1)}s`,
+			undefined,
+			undefined,
+			false,
+		)
 
 		// persist to history, so the Controller sees it if needed
 		await this.say("api_req_finished")
@@ -1742,7 +1800,7 @@ export class Task {
 		this.taskState.didAutomaticallyRetryFailedApiRequest = true
 	}
 
-	async *attemptApiRequest(previousApiReqIndex: number): ApiStream {
+	async *attemptApiRequest(previousApiReqIndex: number, forceModel?: string): ApiStream {
 		// Wait for MCP servers to be connected before generating system prompt
 		await pWaitFor(() => this.mcpHub.isConnecting !== true, {
 			timeout: 10_000,
@@ -1821,8 +1879,14 @@ export class Task {
 			await this.messageStateHandler.saveClineMessagesAndUpdateHistory()
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
-
-		const stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+		// Use forced model if specified, otherwise use default api
+		let stream
+		if (this.isPhaseRoot) {
+			const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
+			stream = apiToUse.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+		} else {
+			stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+		}
 
 		const iterator = stream[Symbol.asyncIterator]()
 

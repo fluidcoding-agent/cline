@@ -119,6 +119,8 @@ import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../pl
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
 import { Controller } from "../controller"
+import { getAllExtensionState } from "../storage/state"
+import { refinePrompt } from "./prompt-refinement"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
@@ -1049,10 +1051,81 @@ export class Task {
 		await this.say("text", task, images)
 		this.isInitialized = true
 
+		let finalTask = task
+		// Apply prompt refinement if enabled and task is provided
+		if (task && this.autoApprovalSettings.actions.usePromptRefinement) {
+			try {
+				console.log("[Task] Applying prompt refinement...")
+				await this.say(
+					"api_req_started",
+					JSON.stringify({
+						request: "Refining prompt...",
+					}),
+				)
+
+				const updatePromptRefinementStatus = (message: string) => {
+					const lastApiReqStartedIndex = findLastIndex(this.clineMessages, (m) => m.say === "api_req_started")
+					if (lastApiReqStartedIndex !== -1) {
+						const currentApiReqInfo: ClineApiReqInfo = JSON.parse(
+							this.clineMessages[lastApiReqStartedIndex].text || "{}",
+						)
+						this.clineMessages[lastApiReqStartedIndex].text = JSON.stringify({
+							...currentApiReqInfo,
+							request: message,
+							cost: 0.001,
+						} satisfies ClineApiReqInfo)
+					}
+				}
+
+				let refinedResult = await refinePrompt(task, this.api)
+
+				updatePromptRefinementStatus("Prompt refinement completed")
+
+				// await this.saveClineMessagesAndUpdateHistory()
+				// await this.postStateToWebview()
+
+				if (refinedResult.needsMoreInfo) {
+					const questionList = refinedResult.followUpQuestions.map(
+						(followUpQ) =>
+							({
+								question: followUpQ.question,
+								options: followUpQ.options,
+								selected: "",
+							}) satisfies ClineAskQuestion,
+					)
+
+					// 2) Answer 저장
+					await this.askMoreQuestion(questionList)
+
+					// 3) Refine the prompt with the answers
+					for (const ques of questionList) {
+						task += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
+						// await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
+					}
+
+					await this.say(
+						"api_req_started",
+						JSON.stringify({
+							request: "Refining prompt...",
+						}),
+					)
+
+					refinedResult = await refinePrompt(task, this.api)
+					// Update again after second refinement
+					updatePromptRefinementStatus("Prompt refinement completed")
+				}
+				finalTask = refinedResult.refinedPrompt
+				await this.say("text", `Refined prompt: \n${finalTask}`)
+			} catch (error) {
+				console.error("[Task] Prompt refinement failed:", error)
+				// Continue with original prompt if refinement fails
+			}
+		}
+
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		if (this.isPhaseRoot) {
-			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		}
@@ -1155,6 +1228,25 @@ export class Task {
 			await this.saveCheckpoint()
 			return true
 		}
+	}
+
+	async askMoreQuestion(questionList: ClineAskQuestion[]): Promise<ClineAskQuestion[]> {
+		for (const ques of questionList) {
+			const sharedMessage = {
+				question: ques.question,
+				options: ques.options,
+			} satisfies ClineAskQuestion
+
+			const {
+				text,
+				// images,
+				// files: followupFiles,
+			} = await this.ask("followup", JSON.stringify(sharedMessage), false)
+
+			await this.say("text", `Here is the answer: ${text}`)
+			ques.selected = text
+		}
+		return questionList
 	}
 
 	private async resumeTaskFromHistory() {

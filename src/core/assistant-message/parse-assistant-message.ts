@@ -41,7 +41,6 @@ export function parseAssistantMessageV2(assistantMessage: string): AssistantMess
 	for (const name of toolParamNames) {
 		toolParamOpenTags.set(`<${name}>`, name)
 	}
-
 	const len = assistantMessage.length
 	for (let i = 0; i < len; i++) {
 		const currentCharIndex = i

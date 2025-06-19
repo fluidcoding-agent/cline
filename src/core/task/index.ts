@@ -989,7 +989,7 @@ export class Task {
 		await this.say("text", task, images, files)
 		this.taskState.isInitialized = true
 
-		let finalTask = task
+		let finalTask = task || ""
 		// Apply prompt refinement if enabled and task is provided
 		if (task && this.autoApprovalSettings.actions.usePromptRefinement) {
 			try {
@@ -1063,7 +1063,13 @@ export class Task {
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		if (this.isPhaseRoot) {
-			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
+			userContent = [
+				{
+					type: "text",
+					text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask === "" ? phaseAwarePrompt : finalTask}\n</task>`,
+				},
+				...imageBlocks,
+			]
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		}

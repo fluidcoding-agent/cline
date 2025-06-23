@@ -65,6 +65,7 @@ async function updateAutoApprovalSettings(context: vscode.ExtensionContext, cont
 				useBrowser: false, // Keep browser disabled for tests
 				useMcp: false, // Keep MCP disabled for tests
 				usePromptRefinement: true, // Enable prompt refinement for tests
+				usePhasePlanning: true, // Enable planning for tests
 			},
 			maxRequests: 10000, // Increase max requests for tests
 		}

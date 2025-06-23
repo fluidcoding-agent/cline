@@ -56,6 +56,8 @@ import { MessageStateHandler } from "./message-state"
 import { AutoApprove } from "./tools/autoApprove"
 import { showNotificationForApprovalIfAutoApprovalEnabled } from "./utils"
 import { Mode } from "@shared/storage/types"
+import { Controller } from "../controller"
+import { buildPhasePrompt } from "../planning/build_prompt"
 
 export class ToolExecutor {
 	private autoApprover: AutoApprove
@@ -86,7 +88,11 @@ export class ToolExecutor {
 		private clineIgnoreController: ClineIgnoreController,
 		private workspaceTracker: WorkspaceTracker,
 		private contextManager: ContextManager,
+<<<<<<< HEAD
 		private cacheService: CacheService,
+=======
+		private sidebarController: Controller,
+>>>>>>> 1ae47598b (Add ui for planning toggle (#30))
 
 		// Configuration & Settings
 		private autoApprovalSettings: AutoApprovalSettings,
@@ -2247,7 +2253,7 @@ export class ToolExecutor {
 						})
 					}
 				}
-
+				this.taskState.phaseFinished = true // reset phase finished flag
 				try {
 					const lastMessage = this.messageStateHandler.getClineMessages().at(-1)
 					if (block.partial) {
@@ -2340,13 +2346,60 @@ export class ToolExecutor {
 						}
 
 						// we already sent completion_result says, an empty string asks relinquishes control over button and field
-						const { response, text, images, files: completionFiles } = await this.ask("completion_result", "", false)
-						if (response === "yesButtonClicked") {
-							this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-							break
+						let response: string | undefined
+						let text: string | undefined
+						let images: string[] | undefined
+						let completionFiles: string[] | undefined
+						this.sidebarController.onPhaseCompleted(/* openNewTask */ true)
+						if (this.taskState.phaseFinished) {
+							if (this.taskState.phaseTracker?.isAllComplete()) {
+								const {
+									response,
+									text,
+									images,
+									files: completionFiles,
+								} = await this.ask("completion_result", "", false)
+
+								if (response === "yesButtonClicked") {
+									this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+									break
+								}
+								await this.say("user_feedback", text ?? "", images, completionFiles)
+								await this.saveCheckpoint()
+							} else {
+								const phase = this.taskState.phaseTracker?.currentPhase
+								const total = this.taskState.phaseTracker?.totalPhases
+								const nextPhasePrompt = phase
+									? buildPhasePrompt(phase, total ?? 1, this.taskState.phaseTracker?.getProjectOverview() || "")
+									: ""
+								const {
+									response,
+									text,
+									images,
+									files: newTaskFiles,
+								} = await this.ask("new_task", nextPhasePrompt, false)
+
+								if (response === "yesButtonClicked") {
+									this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+									break
+								}
+								await this.say("user_feedback", text ?? "", images, newTaskFiles)
+								await this.saveCheckpoint()
+							}
+						} else {
+							const {
+								response,
+								text,
+								images,
+								files: completionFiles,
+							} = await this.ask("completion_result", "", false)
+							if (response === "yesButtonClicked") {
+								this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+								break
+							}
+							await this.say("user_feedback", text ?? "", images, completionFiles)
+							await this.saveCheckpoint()
 						}
-						await this.say("user_feedback", text ?? "", images, completionFiles)
-						await this.saveCheckpoint()
 
 						const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
 						if (commandResult) {

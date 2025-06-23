@@ -44,6 +44,8 @@ import { TaskConfig, validateTaskConfig } from "./tools/types/TaskConfig"
 import { createUIHelpers } from "./tools/types/UIHelpers"
 import { ToolDisplayUtils } from "./tools/utils/ToolDisplayUtils"
 import { ToolResultUtils } from "./tools/utils/ToolResultUtils"
+import { Controller } from "../controller"
+
 
 export class ToolExecutor {
 	private autoApprover: AutoApprove
@@ -75,6 +77,7 @@ export class ToolExecutor {
 		private clineIgnoreController: ClineIgnoreController,
 		private contextManager: ContextManager,
 		private stateManager: StateManager,
+		private sidebarController: Controller,
 
 		// Configuration & Settings
 		private autoApprovalSettings: AutoApprovalSettings,
@@ -160,6 +163,7 @@ export class ToolExecutor {
 				shouldAutoApproveToolWithPath: this.shouldAutoApproveToolWithPath.bind(this),
 			},
 			coordinator: this.coordinator,
+			sidebarController: this.sidebarController,
 		}
 
 		// Validate the config at runtime to catch any missing properties

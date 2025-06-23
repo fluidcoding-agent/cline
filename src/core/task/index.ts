@@ -356,6 +356,7 @@ export class Task {
 			this.workspaceTracker,
 			this.contextManager,
 			this.cacheService,
+			this.sidebarController,
 			this.autoApprovalSettings,
 			this.browserSettings,
 			cwd,
@@ -425,7 +426,7 @@ export class Task {
 		}
 
 		// Build and return the temporary API handler
-		return buildApiHandler(tempConfig, this.chatSettings.mode)
+		return buildApiHandler(tempConfig, this.mode)
 	}
 
 	async restoreCheckpoint(messageTs: number, restoreType: ClineCheckpointRestore, offset?: number) {
@@ -1089,16 +1090,6 @@ export class Task {
 
 		await this.postStateToWebview()
 
-		let phaseAwarePrompt: string
-		phaseAwarePrompt =
-			this.phaseTracker && !this.isPhaseRoot
-				? buildPhasePrompt(
-						this.phaseTracker.currentPhase,
-						this.phaseTracker.totalPhases,
-						this.phaseTracker.getProjectOverview(),
-					)
-				: (task ?? "")
-
 		await this.say("text", task, images, files)
 		this.taskState.isInitialized = true
 
@@ -1175,11 +1166,25 @@ export class Task {
 
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
-		if (this.isPhaseRoot) {
-			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
+		let phaseAwarePrompt: string = ""
+		if (this.autoApprovalSettings.actions.usePhasePlanning) {
+			phaseAwarePrompt =
+				this.phaseTracker && !this.isPhaseRoot
+					? buildPhasePrompt(
+							this.phaseTracker.currentPhase,
+							this.phaseTracker.totalPhases,
+							this.phaseTracker.getProjectOverview(),
+						)
+					: (task ?? "")
+			if (this.isPhaseRoot) {
+				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
+			} else {
+				userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+			}
 		} else {
-			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+			userContent = [{ type: "text", text: `<task>\n${task}\n</task>` }, ...imageBlocks]
 		}
+
 		if (files?.length) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
@@ -1190,14 +1195,18 @@ export class Task {
 			}
 		}
 
-		// Planning Phase
-		if (this.isPhaseRoot) {
-			await this.executePlanningPhase(userContent)
-			// await this.executePlanningPhase(phaseAwarePrompt)
-		}
+		if (this.autoApprovalSettings.actions.usePhasePlanning) {
+			// Planning Phase
+			if (this.isPhaseRoot) {
+				await this.executePlanningPhase(userContent)
+				// await this.executePlanningPhase(phaseAwarePrompt)
+			}
 
-		// Execution Phase
-		await this.executeCurrentPhase()
+			// Execution Phase
+			await this.executeCurrentPhase()
+		} else {
+			await this.initiateTaskLoop(userContent)
+		}
 	}
 
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
@@ -1229,7 +1238,7 @@ export class Task {
 
 		// Mark the first phase as complete
 		this.phaseTracker.markCurrentPhaseComplete()
-		this.sidebarController.onPhaseCompleted(this)
+		this.sidebarController.onPhaseCompleted()
 
 		// Start execution of the first phase
 		this.newPhaseOpened = false
@@ -1265,7 +1274,8 @@ export class Task {
 
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
-		const phaseFinished = await this.initiateTaskLoop(userBlocks)
+		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
+		this.taskState.phaseFinished = phaseFinished
 		if (phaseFinished) {
 			this.sidebarController.onTaskCompleted()
 		}

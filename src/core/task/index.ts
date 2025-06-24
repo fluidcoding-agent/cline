@@ -1004,7 +1004,7 @@ export class Task {
 
 		let finalTask = task
 		// Apply prompt refinement if enabled and task is provided
-		if (task && this.autoApprovalSettings.actions.usePromptRefinement) {
+		if (this.isPhaseRoot && task && this.autoApprovalSettings.actions.usePromptRefinement) {
 			try {
 				console.log("[Task] Applying prompt refinement...")
 				await this.say(
@@ -1070,6 +1070,18 @@ export class Task {
 			} catch (error) {
 				console.error("[Task] Prompt refinement failed:", error)
 				// Continue with original prompt if refinement fails
+			}
+		}
+
+		if (
+			this.isPhaseRoot &&
+			this.autoApprovalSettings.actions.usePromptRefinement &&
+			this.autoApprovalSettings.actions.usePhasePlanning
+		) {
+			const approved = await this.askUserApproval("ask_question", "Proceed to Planning Phase with the refined prompt?")
+			if (!approved) {
+				await this.say("text", "Proceed to Planning Phase aborted by user.")
+				return
 			}
 		}
 

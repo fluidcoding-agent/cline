@@ -1171,6 +1171,8 @@ export class Task {
 			const phaseIndex = this.phaseTracker.currentPhaseIndex
 			const prompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
 
+			this.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
+
 			if (!this.newPhaseOpened) {
 				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
 			} else {

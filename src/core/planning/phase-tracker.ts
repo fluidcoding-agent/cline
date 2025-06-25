@@ -440,6 +440,7 @@ export class PhaseTracker {
 			return
 		}
 		phaseState.taskId = taskId
+		this.saveCheckpoint()
 	}
 
 	public completePhase(phaseId: number): void {
@@ -507,6 +508,23 @@ export class PhaseTracker {
 			throw new Error(`Phase ${index} is not properly initialized: missing phase data`)
 		}
 		return p.phase
+	}
+
+	public getPhaseByTaskId(taskId: string): number {
+		const phaseState = this.phaseStates.find((p) => p.taskId && p.taskId === taskId)
+		if (!phaseState) {
+			return -1
+		}
+		return phaseState.index
+	}
+
+	public resetPhaseStatus(startIdx: number) {
+		// reset
+		this.phaseStates.slice(startIdx).forEach((item) => {
+			item.taskId = ""
+			item.status = PhaseStatus.Pending
+		})
+		this.saveCheckpoint()
 	}
 
 	public get totalPhases(): number {

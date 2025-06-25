@@ -393,6 +393,14 @@ export class Task {
 
 		let didWorkspaceRestoreFail = false
 
+		// if taskId in phase-checkpoint.json -> this.phaseTracker restore
+		let phaseIdx
+		if (this.phaseTracker && (phaseIdx = this.phaseTracker.getPhaseByTaskId(this.taskId)) > 0) {
+			this.phaseTracker.resetPhaseStatus(phaseIdx)
+			this.phaseTracker.updateTaskIdPhase(phaseIdx, this.taskId)
+			this.phaseTracker.currentPhaseIndex = phaseIdx
+		}
+
 		switch (restoreType) {
 			case "task":
 				break

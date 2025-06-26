@@ -57,7 +57,7 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { ChangeLocation, StreamingJsonReplacer } from "../assistant-message/diff-json"
 import { Controller } from "../controller"
 import { buildPhasePrompt } from "../planning/build_prompt"
-import { PhaseStatus } from "../planning/phase-tracker"
+import { PROMPTS } from "../planning/planning_prompt"
 
 export class ToolExecutor {
 	constructor(
@@ -2335,7 +2335,7 @@ export class ToolExecutor {
 							} else {
 								const result = await this.sidebarController.task?.askUserApproval(
 									"ask_question",
-									MOVE_NEXT_PHASE_ASK,
+									PROMPTS.MOVE_NEXT_PHASE_ASK,
 								)
 								if (result) {
 									try {

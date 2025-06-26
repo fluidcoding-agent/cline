@@ -130,7 +130,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		}
 
 		// we already sent completion_result says, an empty string asks relinquishes control over button and field
-		let text: string[] | undefined
+		let text: string | undefined
 		let images: string[] | undefined
 		let completionFiles: string[] | undefined
 		config.sidebarController.onPhaseCompleted(/* openNewTask */ true)

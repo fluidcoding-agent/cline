@@ -96,7 +96,7 @@ import { updateApiReqMsg } from "./utils"
 import { CacheService } from "../storage/CacheService"
 import { Mode, OpenaiReasoningEffort } from "@shared/storage/types"
 import { ShowMessageType } from "@/shared/proto/index.host"
-import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../planning/phase-tracker"
+import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile, PhaseStatus } from "../planning/phase-tracker"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
 import { Controller } from "../controller"
@@ -162,11 +162,6 @@ export class Task {
 	apiConversationHistory: Anthropic.MessageParam[] = []
 	clineMessages: ClineMessage[] = []
 
-	private phaseTracker?: PhaseTracker
-	private isPhaseRoot: boolean = false
-	public newPhaseOpened: boolean = true
-	private phaseFinished: boolean = false
-
 	constructor(
 		context: vscode.ExtensionContext,
 		mcpHub: McpHub,
@@ -206,8 +201,6 @@ export class Task {
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
 		this.sidebarController = sidebarController
-		this.phaseTracker = phaseTracker
-		this.isPhaseRoot = isPhaseRoot
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 
 		// TODO(ae) this is a hack to replace the terminal manager for standalone,
@@ -239,6 +232,9 @@ export class Task {
 		this.enableCheckpoints = enableCheckpointsSetting
 		this.cwd = cwd
 		this.cacheService = cacheService
+
+		this.taskState.phaseTracker = phaseTracker
+		this.taskState.isPhaseRoot = isPhaseRoot
 
 		// Set up MCP notification callback for real-time notifications
 		this.mcpHub.setNotificationCallback(async (serverName: string, level: string, message: string) => {
@@ -341,6 +337,8 @@ export class Task {
 			// New task started
 			telemetryService.captureTaskCreated(this.taskId, currentProvider)
 		}
+
+		this.taskState.phaseTracker = phaseTracker
 
 		this.toolExecutor = new ToolExecutor(
 			this.context,
@@ -1095,7 +1093,7 @@ export class Task {
 
 		let finalTask = task
 		// Apply prompt refinement if enabled and task is provided
-		if (this.isPhaseRoot && task && this.autoApprovalSettings.actions.usePromptRefinement) {
+		if (this.taskState.isPhaseRoot && task && this.autoApprovalSettings.actions.usePromptRefinement) {
 			try {
 				console.log("[Task] Applying prompt refinement...")
 				let refinedResult = await refinePrompt(task, this.api, this)
@@ -1125,11 +1123,11 @@ export class Task {
 		}
 
 		if (
-			this.isPhaseRoot &&
+			this.taskState.isPhaseRoot &&
 			this.autoApprovalSettings.actions.usePromptRefinement &&
 			this.autoApprovalSettings.actions.usePhasePlanning
 		) {
-			const approved = await this.askUserApproval("ask_question", "Proceed to Planning Phase with the refined prompt?")
+			const approved = await this.askUserApproval("ask_question", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
 			if (!approved) {
 				await this.say("text", "Proceed to Planning Phase aborted by user.")
 				return
@@ -1141,14 +1139,14 @@ export class Task {
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			phaseAwarePrompt =
-				this.phaseTracker && !this.isPhaseRoot
+				this.taskState.phaseTracker && !this.taskState.isPhaseRoot
 					? buildPhasePrompt(
-							this.phaseTracker.currentPhase,
-							this.phaseTracker.totalPhases,
-							this.phaseTracker.getProjectOverview(),
+							this.taskState.phaseTracker.currentPhase,
+							this.taskState.phaseTracker.totalPhases,
+							this.taskState.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
-			if (this.isPhaseRoot) {
+			if (this.taskState.isPhaseRoot) {
 				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
 			} else {
 				userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
@@ -1169,7 +1167,7 @@ export class Task {
 
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
-			if (this.isPhaseRoot) {
+			if (this.taskState.isPhaseRoot) {
 				await this.executePlanningPhase(userContent)
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
@@ -1184,63 +1182,90 @@ export class Task {
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.phaseTracker) {
+		if (!this.taskState.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
-		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(firstAssistantMessage)
-		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
-		this.phaseTracker!.projOverview = projOverview
-		this.phaseTracker!.executionPlan = executionPlan
-		this.phaseTracker!.requirements = requirements
-		this.phaseTracker.addPhasesFromPlan(planSteps)
+		try {
+			const {
+				projOverview,
+				executionPlan,
+				requirements,
+				phases: planSteps,
+			} = await parsePlanFromOutput(firstAssistantMessage)
+			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
+			this.taskState.phaseTracker!.projOverview = projOverview
+			this.taskState.phaseTracker!.executionPlan = executionPlan
+			this.taskState.phaseTracker!.requirements = requirements
+			this.taskState.phaseTracker.addPhasesFromPlan(planSteps)
 
-		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
+			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
+		} catch (error) {
+			await this.say(
+				"text",
+				`## Planning phase failed..\n\n If you want to proceed without a plan, please type 'continue' to skip the planning phase.`,
+			) // TODO: (sa)
 
-		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
+			// Mark planning phase as skipped and update state
+			// 	this.taskState.phaseTracker?.markCurrentPhaseComplete()
+			// 	this.taskState.isPhaseRoot = false
+			// 	this.taskState.newPhaseOpened = false
+
+			// 	// Provide clear recovery instructions
+			// 	await this.say(
+			// 		"text",
+			// 		`The system has automatically marked the planning phase as complete.
+			// You may now continue with the next phase or provide new instructions.`,
+			// 		undefined,
+			// 		undefined,
+			// 		false,
+			// 	)
+		}
+
+		const approved = await this.askUserApproval("ask_question", PROMPTS.PROCEED_WITH_PLAN_ASK)
 		if (!approved) {
 			await this.say("text", "Plan execution aborted by user.")
 			return
 		}
 
 		// Planning phase is complete, disabling root mode
-		this.isPhaseRoot = false
+		this.taskState.isPhaseRoot = false
+		this.taskState.newPhaseOpened = false
 
 		// Mark the first phase as complete
-		this.phaseTracker.markCurrentPhaseComplete()
-		this.sidebarController.onPhaseCompleted()
-
-		// Start execution of the first phase
-		this.newPhaseOpened = false
-		await this.executeCurrentPhase()
+		this.taskState.phaseTracker.markCurrentPhaseComplete()
+		this.taskState.phaseTracker.currentPhaseIndex++
+		const next = this.taskState.phaseTracker.phaseStates[this.taskState.phaseTracker.currentPhaseIndex]
+		next.status = PhaseStatus.InProgress
+		next.startTime = Date.now()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
-		if (!this.phaseTracker) {
+		if (!this.taskState.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
-		while (!this.phaseTracker!.isAllComplete()) {
-			const phase = this.phaseTracker.currentPhase
-			const total = this.phaseTracker.totalPhases
-			const phaseIndex = this.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
+		while (!this.taskState.phaseTracker!.isAllComplete()) {
+			const phase = this.taskState.phaseTracker.currentPhase
+			const total = this.taskState.phaseTracker.totalPhases
+			const phaseIndex = this.taskState.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.taskState.phaseTracker.getProjectOverview())
 
-			if (!this.newPhaseOpened) {
+			if (!this.taskState.newPhaseOpened) {
 				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
 			} else {
-				this.isPhaseRoot = false
+				this.taskState.isPhaseRoot = false
 				await this.runSinglePhase(prompt)
 			}
-			this.newPhaseOpened = false
+			this.taskState.newPhaseOpened = false
 		}
 		await this.say("text", "All phases completed successfully!")
 		this.sidebarController.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
-		if (!this.phaseTracker) {
+		if (!this.taskState.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
@@ -1254,8 +1279,8 @@ export class Task {
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
-		const { response, text, images, files } = await this.ask(type, partialMessage)
-		if (response !== "yesButtonClicked") {
+		const result = await this.ask(type, partialMessage)
+		if (result.response !== "yesButtonClicked") {
 			return false
 		} else {
 			await this.saveCheckpoint()
@@ -1477,7 +1502,7 @@ export class Task {
 			// There is a MAX_REQUESTS_PER_TASK limit to prevent infinite requests, but Cline is prompted to finish the task as efficiently as he can.
 
 			//const totalCost = this.calculateApiCost(totalInputTokens, totalOutputTokens)
-			if (this.phaseFinished) {
+			if (this.taskState.phaseFinished) {
 				return true
 			}
 			if (didEndLoop) {
@@ -1510,7 +1535,7 @@ export class Task {
 
 		try {
 			const markdown = userContent.map(formatContentBlockToMarkdown).join("\n\n")
-			await this.say("api_req_started", JSON.stringify({ request: markdown }))
+			await this.say("api_req_started", JSON.stringify({ request: markdown } satisfies ClineApiReqInfo))
 		} catch (e) {
 			console.warn("Could not show api_req_started banner:", e)
 		}
@@ -1519,6 +1544,13 @@ export class Task {
 		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
 		let assistantText = ""
 		const start = performance.now()
+
+		// Track token usage like in recursivelyMakeClineRequests
+		let cacheWriteTokens = 0
+		let cacheReadTokens = 0
+		let inputTokens = 0
+		let outputTokens = 0
+		let totalCost: number | undefined
 
 		// Create a partial message for streaming updates
 		await this.say("text", "Planning in progress...", undefined, undefined, true)
@@ -1530,12 +1562,18 @@ export class Task {
 
 		// Process stream chunks and update UI with thinking progress
 		for await (const chunk of firstStream) {
-			if (chunk.type === "text") {
+			if (chunk.type === "usage") {
+				inputTokens += chunk.inputTokens
+				outputTokens += chunk.outputTokens
+				cacheWriteTokens += chunk.cacheWriteTokens ?? 0
+				cacheReadTokens += chunk.cacheReadTokens ?? 0
+				totalCost = chunk.totalCost
+			} else if (chunk.type === "text") {
 				assistantText += chunk.text
 				totalChunks++
 
 				// Update UI periodically to show progress without overwhelming it
-				const now = Date.now()
+				const now = performance.now()
 				if (now - lastUpdateTime > updateInterval) {
 					// Update progress message with latest thinking content
 					// Using the partial flag to indicate this is a progressive update
@@ -1560,8 +1598,19 @@ export class Task {
 			false,
 		)
 
-		// persist to history, so the Controller sees it if needed
-		await this.say("api_req_finished")
+		// Update api_req_started message with final info using updateApiReqMsg
+		const lastApiReqIndex = findLastIndex(this.messageStateHandler.getClineMessages(), (m) => m.say === "api_req_started")
+		await updateApiReqMsg({
+			messageStateHandler: this.messageStateHandler,
+			lastApiReqIndex,
+			inputTokens,
+			outputTokens,
+			cacheWriteTokens,
+			cacheReadTokens,
+			api: this.api,
+			totalCost,
+		})
+
 		await this.messageStateHandler.addToApiConversationHistory({
 			role: "assistant",
 			content: [{ type: "text", text: assistantText }],
@@ -2054,7 +2103,7 @@ export class Task {
 		}
 		// Use forced model if specified, otherwise use default api
 		let stream
-		if (this.isPhaseRoot) {
+		if (this.taskState.isPhaseRoot) {
 			const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
 			stream = apiToUse.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
 		} else {
@@ -2299,14 +2348,14 @@ export class Task {
 	}
 
 	public getPhaseTracker(): PhaseTracker | undefined {
-		return this.phaseTracker
+		return this.taskState.phaseTracker
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
 		if (this.taskState.abort) {
 			throw new Error("Cline instance aborted")
 		}
-		if (this.phaseFinished) {
+		if (this.taskState.phaseFinished) {
 			return true
 		}
 

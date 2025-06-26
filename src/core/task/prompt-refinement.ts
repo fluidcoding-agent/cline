@@ -201,7 +201,28 @@ RULES:
 export async function refinePrompt(prompt: string, apiHandler: ApiHandler, taskInstance?: any): Promise<RefinedPromptResult> {
 	try {
 		// Apply LLM-based prompt refinement
-		const refinedPrompt = await performLLMPromptRefinement(prompt, apiHandler, taskInstance)
+		let refinedPrompt = await performLLMPromptRefinement(prompt, apiHandler, taskInstance)
+
+		if (refinedPrompt.needsMoreInfo) {
+			const questionList = (refinedPrompt.followUpQuestions || []).map(
+				(followUpQ) =>
+					({
+						question: followUpQ.question,
+						options: followUpQ.options,
+						selected: "",
+					}) satisfies ClineAskQuestion,
+			)
+
+			await askMoreQuestion(questionList, taskInstance)
+			for (const ques of questionList) {
+				prompt += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
+			}
+
+			// refinedResult = await refinePrompt(task, taskInstance.api, this)
+			refinedPrompt = await performLLMPromptRefinement(prompt, apiHandler, taskInstance)
+		}
+		let finalTask = refinedPrompt.refinedPrompt
+		await taskInstance.say("text", `Refined prompt: \n${finalTask}`)
 
 		return {
 			originalPrompt: prompt,
@@ -387,4 +408,23 @@ const updatePromptRefinementStatus = (message: string, taskInstance?: any) => {
 			} satisfies ClineApiReqInfo),
 		})
 	}
+}
+
+const askMoreQuestion = async (questionList: ClineAskQuestion[], taskInstance?: any): Promise<ClineAskQuestion[]> => {
+	for (const ques of questionList) {
+		const sharedMessage = {
+			question: ques.question,
+			options: ques.options,
+		} satisfies ClineAskQuestion
+
+		const {
+			text,
+			// images,
+			// files: followupFiles,
+		} = await taskInstance.ask("followup", JSON.stringify(sharedMessage), false)
+
+		await taskInstance.say("text", `Here is the answer: ${text}`)
+		ques.selected = text
+	}
+	return questionList
 }

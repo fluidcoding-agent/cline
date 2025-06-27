@@ -5,25 +5,17 @@ import {
 	ApiConfiguration,
 	bedrockDefaultModelId,
 	bedrockModels,
-	cerebrasModels,
-	claudeCodeModels,
-	doubaoModels,
 	geminiModels,
 	internationalQwenModels,
 	liteLlmModelInfoSaneDefaults,
 	mainlandQwenModels,
 	ModelInfo,
 	nebiusModels,
-	vertexGlobalModels,
-	vertexModels,
-	xaiModels,
-	sapAiCoreModels,
 } from "@shared/api"
 import { EmptyRequest, StringRequest } from "@shared/proto/common"
-import { OpenAiModelsRequest, UpdateApiConfigurationRequest } from "@shared/proto/models"
+import { UpdateApiConfigurationRequest } from "@shared/proto/models"
 import { convertApiConfigurationToProto } from "@shared/proto-conversions/models/api-configuration-conversion"
 import {
-	VSCodeButton,
 	VSCodeCheckbox,
 	VSCodeDropdown,
 	VSCodeLink,
@@ -32,14 +24,13 @@ import {
 	VSCodeRadioGroup,
 	VSCodeTextField,
 } from "@vscode/webview-ui-toolkit/react"
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useInterval } from "react-use"
 import styled from "styled-components"
 import * as vscodemodels from "vscode"
 import { ClineAccountInfoCard } from "./ClineAccountInfoCard"
 import OllamaModelPicker from "./OllamaModelPicker"
 import OpenRouterModelPicker, { ModelDescriptionMarkdown, OPENROUTER_MODEL_PICKER_Z_INDEX } from "./OpenRouterModelPicker"
-import RequestyModelPicker from "./RequestyModelPicker"
 import ThinkingBudgetSlider from "./ThinkingBudgetSlider"
 import { formatPrice } from "./utils/pricingUtils"
 import { normalizeApiConfiguration } from "./utils/providerUtils"
@@ -54,7 +45,16 @@ import { AnthropicProvider } from "./providers/AnthropicProvider"
 import { AskSageProvider } from "./providers/AskSageProvider"
 import { OpenAINativeProvider } from "./providers/OpenAINative"
 import { GeminiProvider } from "./providers/GeminiProvider"
+import { DoubaoProvider } from "./providers/DoubaoProvider"
+import { VertexProvider } from "./providers/VertexProvider"
 import GeminiCliProvider from "./providers/GeminiCliProvider"
+import { RequestyProvider } from "./providers/RequestyProvider"
+import { FireworksProvider } from "./providers/FireworksProvider"
+import { XaiProvider } from "./providers/XaiProvider"
+import { CerebrasProvider } from "./providers/CerebrasProvider"
+import { OllamaProvider } from "./providers/OllamaProvider"
+import { ClaudeCodeProvider } from "./providers/ClaudeCodeProvider"
+import { SapAiCoreProvider } from "./providers/SapAiCoreProvider"
 
 interface ApiOptionsProps {
 	showModelOptions: boolean
@@ -65,14 +65,6 @@ interface ApiOptionsProps {
 }
 
 const SUPPORTED_THINKING_MODELS: Record<string, string[]> = {
-	vertex: [
-		"claude-3-7-sonnet@20250219",
-		"claude-sonnet-4@20250514",
-		"claude-opus-4@20250514",
-		"gemini-2.5-flash-preview-05-20",
-		"gemini-2.5-flash-preview-04-17",
-		"gemini-2.5-pro-preview-06-05",
-	],
 	qwen: [
 		"qwen3-235b-a22b",
 		"qwen3-32b",
@@ -88,7 +80,7 @@ const SUPPORTED_THINKING_MODELS: Record<string, string[]> = {
 }
 
 // This is necessary to ensure dropdown opens downward, important for when this is used in popup
-const DROPDOWN_Z_INDEX = OPENROUTER_MODEL_PICKER_Z_INDEX + 2 // Higher than the OpenRouterModelPicker's and ModelSelectorTooltip's z-index
+export const DROPDOWN_Z_INDEX = OPENROUTER_MODEL_PICKER_Z_INDEX + 2 // Higher than the OpenRouterModelPicker's and ModelSelectorTooltip's z-index
 
 export const DropdownContainer = styled.div<{ zIndex?: number }>`
 	position: relative;
@@ -317,25 +309,13 @@ const ApiOptions = ({
 				/>
 			)}
 
-			{selectedProvider === "claude-code" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.claudeCodePath || ""}
-						style={{ width: "100%", marginTop: 3 }}
-						type="text"
-						onInput={handleInputChange("claudeCodePath")}
-						placeholder="Default: claude"
-					/>
-
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						Path to the Claude Code CLI.
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "claude-code" && (
+				<ClaudeCodeProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
 			{apiConfiguration && selectedProvider === "openai-native" && (
@@ -403,35 +383,13 @@ const ApiOptions = ({
 				</div>
 			)}
 
-			{selectedProvider === "doubao" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.doubaoApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("doubaoApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>Doubao API Key</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						This key is stored locally and only used to make API requests from this extension.
-						{!apiConfiguration?.doubaoApiKey && (
-							<VSCodeLink
-								href="https://console.volcengine.com/home"
-								style={{
-									display: "inline",
-									fontSize: "inherit",
-								}}>
-								You can get a Doubao API key by signing up here.
-							</VSCodeLink>
-						)}
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "doubao" && (
+				<DoubaoProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
 			{apiConfiguration && selectedProvider === "mistral" && (
@@ -760,57 +718,14 @@ const ApiOptions = ({
 				</div>
 			)}
 
-			{apiConfiguration?.apiProvider === "vertex" && (
-				<div
-					style={{
-						display: "flex",
-						flexDirection: "column",
-						gap: 5,
-					}}>
-					<VSCodeTextField
-						value={apiConfiguration?.vertexProjectId || ""}
-						style={{ width: "100%" }}
-						onInput={handleInputChange("vertexProjectId")}
-						placeholder="Enter Project ID...">
-						<span style={{ fontWeight: 500 }}>Google Cloud Project ID</span>
-					</VSCodeTextField>
-					<DropdownContainer zIndex={DROPDOWN_Z_INDEX - 1} className="dropdown-container">
-						<label htmlFor="vertex-region-dropdown">
-							<span style={{ fontWeight: 500 }}>Google Cloud Region</span>
-						</label>
-						<VSCodeDropdown
-							id="vertex-region-dropdown"
-							value={apiConfiguration?.vertexRegion || ""}
-							style={{ width: "100%" }}
-							onChange={handleInputChange("vertexRegion")}>
-							<VSCodeOption value="">Select a region...</VSCodeOption>
-							<VSCodeOption value="us-east5">us-east5</VSCodeOption>
-							<VSCodeOption value="us-central1">us-central1</VSCodeOption>
-							<VSCodeOption value="europe-west1">europe-west1</VSCodeOption>
-							<VSCodeOption value="europe-west4">europe-west4</VSCodeOption>
-							<VSCodeOption value="asia-southeast1">asia-southeast1</VSCodeOption>
-							<VSCodeOption value="global">global</VSCodeOption>
-						</VSCodeDropdown>
-					</DropdownContainer>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: "5px",
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						To use Google Cloud Vertex AI, you need to
-						<VSCodeLink
-							href="https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude#before_you_begin"
-							style={{ display: "inline", fontSize: "inherit" }}>
-							{"1) create a Google Cloud account › enable the Vertex AI API › enable the desired Claude models,"}
-						</VSCodeLink>{" "}
-						<VSCodeLink
-							href="https://cloud.google.com/docs/authentication/provide-credentials-adc#google-idp"
-							style={{ display: "inline", fontSize: "inherit" }}>
-							{"2) install the Google Cloud CLI › configure Application Default Credentials."}
-						</VSCodeLink>
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "vertex" && (
+				<VertexProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+					setApiConfiguration={setApiConfiguration}
+				/>
 			)}
 
 			{apiConfiguration && selectedProvider === "gemini" && (
@@ -832,109 +747,22 @@ const ApiOptions = ({
 				/>
 			)}
 
-			{selectedProvider === "requesty" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.requestyApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("requestyApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>API Key</span>
-					</VSCodeTextField>
-					{!apiConfiguration?.requestyApiKey && <a href="https://app.requesty.ai/manage-api">Get API Key</a>}
-				</div>
+			{apiConfiguration && selectedProvider === "requesty" && (
+				<RequestyProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
-			{selectedProvider === "fireworks" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.fireworksApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("fireworksApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>Fireworks API Key</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						This key is stored locally and only used to make API requests from this extension.
-						{!apiConfiguration?.fireworksApiKey && (
-							<VSCodeLink
-								href="https://fireworks.ai/settings/users/api-keys"
-								style={{
-									display: "inline",
-									fontSize: "inherit",
-								}}>
-								You can get a Fireworks API key by signing up here.
-							</VSCodeLink>
-						)}
-					</p>
-					<VSCodeTextField
-						value={apiConfiguration?.fireworksModelId || ""}
-						style={{ width: "100%" }}
-						onInput={handleInputChange("fireworksModelId")}
-						placeholder={"Enter Model ID..."}>
-						<span style={{ fontWeight: 500 }}>Model ID</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						<span style={{ color: "var(--vscode-errorForeground)" }}>
-							(<span style={{ fontWeight: 500 }}>Note:</span> Cline uses complex prompts and works best with Claude
-							models. Less capable models may not work as expected.)
-						</span>
-					</p>
-					<VSCodeTextField
-						value={apiConfiguration?.fireworksModelMaxCompletionTokens?.toString() || ""}
-						style={{ width: "100%", marginBottom: 8 }}
-						onInput={(e) => {
-							const value = (e.target as HTMLInputElement).value
-							if (!value) {
-								return
-							}
-							const num = parseInt(value, 10)
-							if (isNaN(num)) {
-								return
-							}
-							handleInputChange("fireworksModelMaxCompletionTokens")({
-								target: {
-									value: num,
-								},
-							})
-						}}
-						placeholder={"2000"}>
-						<span style={{ fontWeight: 500 }}>Max Completion Tokens</span>
-					</VSCodeTextField>
-					<VSCodeTextField
-						value={apiConfiguration?.fireworksModelMaxTokens?.toString() || ""}
-						style={{ width: "100%", marginBottom: 8 }}
-						onInput={(e) => {
-							const value = (e.target as HTMLInputElement).value
-							if (!value) {
-								return
-							}
-							const num = parseInt(value)
-							if (isNaN(num)) {
-								return
-							}
-							handleInputChange("fireworksModelMaxTokens")({
-								target: {
-									value: num,
-								},
-							})
-						}}
-						placeholder={"4000"}>
-						<span style={{ fontWeight: 500 }}>Max Context Tokens</span>
-					</VSCodeTextField>
-				</div>
+			{apiConfiguration && selectedProvider === "fireworks" && (
+				<FireworksProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
 			{selectedProvider === "vscode-lm" && (
@@ -1258,73 +1086,14 @@ const ApiOptions = ({
 				</div>
 			)}
 
-			{selectedProvider === "ollama" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.ollamaBaseUrl || ""}
-						style={{ width: "100%" }}
-						type="url"
-						onInput={handleInputChange("ollamaBaseUrl")}
-						placeholder={"Default: http://localhost:11434"}>
-						<span style={{ fontWeight: 500 }}>Base URL (optional)</span>
-					</VSCodeTextField>
-
-					{/* Model selection - use filterable picker */}
-					<label htmlFor="ollama-model-selection">
-						<span style={{ fontWeight: 500 }}>Model</span>
-					</label>
-					<OllamaModelPicker
-						ollamaModels={ollamaModels}
-						selectedModelId={apiConfiguration?.ollamaModelId || ""}
-						onModelChange={(modelId) => {
-							setApiConfiguration({
-								...apiConfiguration,
-								ollamaModelId: modelId,
-							})
-						}}
-						placeholder={ollamaModels.length > 0 ? "Search and select a model..." : "e.g. llama3.1"}
-					/>
-
-					{/* Show status message based on model availability */}
-					{ollamaModels.length === 0 && (
-						<p
-							style={{
-								fontSize: "12px",
-								marginTop: "3px",
-								color: "var(--vscode-descriptionForeground)",
-								fontStyle: "italic",
-							}}>
-							Unable to fetch models from Ollama server. Please ensure Ollama is running and accessible, or enter
-							the model ID manually above.
-						</p>
-					)}
-
-					<VSCodeTextField
-						value={apiConfiguration?.ollamaApiOptionsCtxNum || "32768"}
-						style={{ width: "100%" }}
-						onInput={handleInputChange("ollamaApiOptionsCtxNum")}
-						placeholder={"e.g. 32768"}>
-						<span style={{ fontWeight: 500 }}>Model Context Window</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: "5px",
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						Ollama allows you to run models locally on your computer. For instructions on how to get started, see
-						their{" "}
-						<VSCodeLink
-							href="https://github.com/ollama/ollama/blob/main/README.md"
-							style={{ display: "inline", fontSize: "inherit" }}>
-							quickstart guide.
-						</VSCodeLink>{" "}
-						<span style={{ color: "var(--vscode-errorForeground)" }}>
-							(<span style={{ fontWeight: 500 }}>Note:</span> Cline uses complex prompts and works best with Claude
-							models. Less capable models may not work as expected.)
-						</span>
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "ollama" && (
+				<OllamaProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+					setApiConfiguration={setApiConfiguration}
+				/>
 			)}
 
 			{selectedProvider === "nebius" && (
@@ -1373,130 +1142,32 @@ const ApiOptions = ({
 				</p>
 			)}
 
-			{selectedProvider === "xai" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.xaiApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("xaiApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>X AI API Key</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						<span style={{ color: "var(--vscode-errorForeground)" }}>
-							(<span style={{ fontWeight: 500 }}>Note:</span> Cline uses complex prompts and works best with Claude
-							models. Less capable models may not work as expected.)
-						</span>
-						This key is stored locally and only used to make API requests from this extension.
-						{!apiConfiguration?.xaiApiKey && (
-							<VSCodeLink href="https://x.ai" style={{ display: "inline", fontSize: "inherit" }}>
-								You can get an X AI API key by signing up here.
-							</VSCodeLink>
-						)}
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "xai" && (
+				<XaiProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+					setApiConfiguration={setApiConfiguration}
+				/>
 			)}
 
-			{selectedProvider === "cerebras" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.cerebrasApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("cerebrasApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>Cerebras API Key</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						This key is stored locally and only used to make API requests from this extension.
-						{!apiConfiguration?.cerebrasApiKey && (
-							<VSCodeLink
-								href="https://cloud.cerebras.ai/"
-								style={{
-									display: "inline",
-									fontSize: "inherit",
-								}}>
-								You can get a Cerebras API key by signing up here.
-							</VSCodeLink>
-						)}
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "cerebras" && (
+				<CerebrasProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
-			{selectedProvider === "sapaicore" && (
-				<div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-					<VSCodeTextField
-						value={apiConfiguration?.sapAiCoreClientId || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("sapAiCoreClientId")}
-						placeholder="Enter AI Core Client Id...">
-						<span style={{ fontWeight: 500 }}>AI Core Client Id</span>
-					</VSCodeTextField>
-					{apiConfiguration?.sapAiCoreClientId && (
-						<p style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)" }}>
-							Client Id is set. To change it, please re-enter the value.
-						</p>
-					)}
-					<VSCodeTextField
-						value={apiConfiguration?.sapAiCoreClientSecret ? "********" : ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("sapAiCoreClientSecret")}
-						placeholder="Enter AI Core Client Secret...">
-						<span style={{ fontWeight: 500 }}>AI Core Client Secret</span>
-					</VSCodeTextField>
-					{apiConfiguration?.sapAiCoreClientSecret && (
-						<p style={{ fontSize: "12px", color: "var(--vscode-descriptionForeground)" }}>
-							Client Secret is set. To change it, please re-enter the value.
-						</p>
-					)}
-					<VSCodeTextField
-						value={apiConfiguration?.sapAiCoreBaseUrl || ""}
-						style={{ width: "100%" }}
-						onInput={handleInputChange("sapAiCoreBaseUrl")}
-						placeholder="Enter AI Core Base URL...">
-						<span style={{ fontWeight: 500 }}>AI Core Base URL</span>
-					</VSCodeTextField>
-					<VSCodeTextField
-						value={apiConfiguration?.sapAiCoreTokenUrl || ""}
-						style={{ width: "100%" }}
-						onInput={handleInputChange("sapAiCoreTokenUrl")}
-						placeholder="Enter AI Core Auth URL...">
-						<span style={{ fontWeight: 500 }}>AI Core Auth URL</span>
-					</VSCodeTextField>
-					<VSCodeTextField
-						value={apiConfiguration?.sapAiResourceGroup || ""}
-						style={{ width: "100%" }}
-						onInput={handleInputChange("sapAiResourceGroup")}
-						placeholder="Enter AI Core Resource Group...">
-						<span style={{ fontWeight: 500 }}>AI Core Resource Group</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: "5px",
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						These credentials are stored locally and only used to make API requests from this extension.
-						<VSCodeLink
-							href="https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/access-sap-ai-core-via-api"
-							style={{ display: "inline" }}>
-							You can find more information about SAP AI Core API access here.
-						</VSCodeLink>
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "sapaicore" && (
+				<SapAiCoreProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
 			{apiErrorMessage && (
@@ -1508,31 +1179,6 @@ const ApiOptions = ({
 					}}>
 					{apiErrorMessage}
 				</p>
-			)}
-
-			{selectedProvider === "ollama" && showModelOptions && (
-				<>
-					<VSCodeTextField
-						value={apiConfiguration?.requestTimeoutMs ? apiConfiguration.requestTimeoutMs.toString() : "30000"}
-						style={{ width: "100%" }}
-						onInput={(e: any) => {
-							const value = e.target.value
-							// Convert to number, with validation
-							const numValue = parseInt(value, 10)
-							if (!isNaN(numValue) && numValue > 0) {
-								setApiConfiguration({
-									...apiConfiguration,
-									requestTimeoutMs: numValue,
-								})
-							}
-						}}
-						placeholder="Default: 30000 (30 seconds)">
-						<span style={{ fontWeight: 500 }}>Request Timeout (ms)</span>
-					</VSCodeTextField>
-					<p style={{ fontSize: "12px", marginTop: 3, color: "var(--vscode-descriptionForeground)" }}>
-						Maximum time in milliseconds to wait for API responses before timing out.
-					</p>
-				</>
 			)}
 
 			{selectedProvider === "cline" && showModelOptions && (
@@ -1590,6 +1236,7 @@ const ApiOptions = ({
 				selectedProvider !== "cline" &&
 				selectedProvider !== "anthropic" &&
 				selectedProvider !== "asksage" &&
+				selectedProvider !== "claude-code" &&
 				selectedProvider !== "openai" &&
 				selectedProvider !== "ollama" &&
 				selectedProvider !== "lmstudio" &&
@@ -1602,25 +1249,24 @@ const ApiOptions = ({
 				selectedProvider !== "sambanova" &&
 				selectedProvider !== "openai-native" &&
 				selectedProvider !== "gemini" &&
+				selectedProvider !== "doubao" &&
+				selectedProvider !== "vertex" &&
 				selectedProvider !== "gemini-cli" &&
+				selectedProvider !== "fireworks" &&
+				selectedProvider !== "xai" &&
+				selectedProvider !== "cerebras" &&
+				selectedProvider !== "sapaicore" &&
 				showModelOptions && (
 					<>
 						<DropdownContainer zIndex={DROPDOWN_Z_INDEX - 2} className="dropdown-container">
 							<label htmlFor="model-id">
 								<span style={{ fontWeight: 500 }}>Model</span>
 							</label>
-							{selectedProvider === "claude-code" && createDropdown(claudeCodeModels)}
-							{selectedProvider === "vertex" &&
-								createDropdown(apiConfiguration?.vertexRegion === "global" ? vertexGlobalModels : vertexModels)}
 							{selectedProvider === "qwen" &&
 								createDropdown(
 									apiConfiguration?.qwenApiLine === "china" ? mainlandQwenModels : internationalQwenModels,
 								)}
-							{selectedProvider === "doubao" && createDropdown(doubaoModels)}
-							{selectedProvider === "xai" && createDropdown(xaiModels)}
-							{selectedProvider === "cerebras" && createDropdown(cerebrasModels)}
 							{selectedProvider === "nebius" && createDropdown(nebiusModels)}
-							{selectedProvider === "sapaicore" && createDropdown(sapAiCoreModels)}
 						</DropdownContainer>
 
 						{SUPPORTED_THINKING_MODELS[selectedProvider]?.includes(selectedModelId) && (
@@ -1631,57 +1277,6 @@ const ApiOptions = ({
 							/>
 						)}
 
-						{selectedProvider === "xai" && selectedModelId.includes("3-mini") && (
-							<>
-								<VSCodeCheckbox
-									style={{ marginTop: 0 }}
-									checked={reasoningEffortSelected}
-									onChange={(e: any) => {
-										const isChecked = e.target.checked === true
-										setReasoningEffortSelected(isChecked)
-										if (!isChecked) {
-											setApiConfiguration({
-												...apiConfiguration,
-												reasoningEffort: "",
-											})
-										}
-									}}>
-									Modify reasoning effort
-								</VSCodeCheckbox>
-
-								{reasoningEffortSelected && (
-									<div>
-										<label htmlFor="reasoning-effort-dropdown">
-											<span style={{}}>Reasoning Effort</span>
-										</label>
-										<DropdownContainer className="dropdown-container" zIndex={DROPDOWN_Z_INDEX - 100}>
-											<VSCodeDropdown
-												id="reasoning-effort-dropdown"
-												style={{ width: "100%", marginTop: 3 }}
-												value={apiConfiguration?.reasoningEffort || "high"}
-												onChange={(e: any) => {
-													setApiConfiguration({
-														...apiConfiguration,
-														reasoningEffort: e.target.value,
-													})
-												}}>
-												<VSCodeOption value="low">low</VSCodeOption>
-												<VSCodeOption value="high">high</VSCodeOption>
-											</VSCodeDropdown>
-										</DropdownContainer>
-										<p
-											style={{
-												fontSize: "12px",
-												marginTop: 3,
-												marginBottom: 0,
-												color: "var(--vscode-descriptionForeground)",
-											}}>
-											High effort may produce more thorough analysis but takes longer and uses more tokens.
-										</p>
-									</div>
-								)}
-							</>
-						)}
 						<ModelInfoView
 							selectedModelId={selectedModelId}
 							modelInfo={selectedModelInfo}
@@ -1693,7 +1288,6 @@ const ApiOptions = ({
 				)}
 
 			{selectedProvider === "cline" && showModelOptions && <OpenRouterModelPicker isPopup={isPopup} />}
-			{selectedProvider === "requesty" && showModelOptions && <RequestyModelPicker isPopup={isPopup} />}
 
 			{modelIdErrorMessage && (
 				<p

@@ -65,7 +65,9 @@ export class Controller {
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
-	latestAnnouncementId = "may-22-2025_16:11:00" // update to some unique identifier when we add a new announcement
+	latestAnnouncementId = "june-25-2025_16:11:00" // update to some unique identifier when we add a new announcement
+
+	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
 
 	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
 

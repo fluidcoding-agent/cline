@@ -69,8 +69,6 @@ export class Controller {
 
 	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
 
-	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
-
 	constructor(
 		readonly context: vscode.ExtensionContext,
 		private readonly outputChannel: vscode.OutputChannel,

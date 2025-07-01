@@ -26,7 +26,7 @@ export interface RefinedPromptResult {
 function getWebProjectTemplate() {
 	return {
 		name: "Modern Web Application Template",
-		description: "A template for creating modern web applications",
+		description: "A comprehensive template for creating modern web applications",
 		slots: {
 			projectName: {
 				description: "Name of the project/application",
@@ -35,7 +35,18 @@ function getWebProjectTemplate() {
 			projectType: {
 				description: "Type of web application",
 				required: true,
-				options: ["portfolio", "blog", "dashboard", "landing-page"],
+				options: [
+					"portfolio",
+					"blog",
+					"dashboard",
+					"landing-page",
+					"e-commerce",
+					"saas",
+					"corporate",
+					"personal",
+					"educational",
+					"entertainment",
+				],
 			},
 			mainFeatures: {
 				description: "Key features and functionality",
@@ -44,32 +55,97 @@ function getWebProjectTemplate() {
 			designStyle: {
 				description: "Visual design preferences",
 				required: true,
+				options: [
+					"modern",
+					"minimalist",
+					"professional",
+					"playful",
+					"corporate",
+					"creative",
+					"elegant",
+					"bold",
+					"clean",
+					"vintage",
+				],
 			},
 			primaryColor: {
 				description: "Primary color scheme",
 				required: true,
+				options: ["blue", "green", "purple", "red", "orange", "pink", "teal", "indigo", "gray", "custom"],
 			},
 			targetAudience: {
 				description: "Target users or audience",
-				required: false,
+				required: true,
 			},
 			technologies: {
 				description: "Preferred technologies or frameworks",
-				required: false,
+				required: true,
+				options: ["React", "Vue", "Angular", "Next.js", "Nuxt.js", "Svelte", "Vanilla JS", "WordPress", "custom"],
 			},
 			pages: {
 				description: "Specific pages or sections needed",
-				required: false,
+				required: true,
 			},
 			animations: {
 				description: "Animation or interaction preferences",
 				required: false,
+				options: ["subtle", "smooth", "bouncy", "minimal", "none", "custom"],
+			},
+			responsiveDesign: {
+				description: "Mobile responsiveness requirements",
+				required: false,
+				options: ["mobile-first", "desktop-first", "tablet-optimized", "all-devices"],
+			},
+			performance: {
+				description: "Performance requirements",
+				required: false,
+				options: ["fast", "standard", "lightweight", "feature-rich"],
+			},
+			accessibility: {
+				description: "Accessibility requirements",
+				required: false,
+				options: ["basic", "wcag-aa", "wcag-aaa", "screen-reader-friendly"],
+			},
+			seo: {
+				description: "SEO requirements",
+				required: false,
+				options: ["basic", "advanced", "e-commerce-seo", "blog-seo"],
+			},
+			authentication: {
+				description: "User authentication needs",
+				required: false,
+				options: ["none", "basic-login", "social-login", "advanced-auth"],
+			},
+			contentManagement: {
+				description: "Content management approach",
+				required: false,
+				options: ["static", "cms", "headless-cms", "database-driven"],
+			},
+			analytics: {
+				description: "Analytics and tracking needs",
+				required: false,
+				options: ["google-analytics", "custom-tracking", "privacy-focused", "none"],
+			},
+			thirdPartyIntegrations: {
+				description: "Third-party integrations needed",
+				required: false,
+				options: ["payment-gateway", "social-media", "email-service", "maps", "none"],
+			},
+			budget: {
+				description: "Budget considerations",
+				required: false,
+				options: ["low-cost", "standard", "premium", "enterprise"],
+			},
+			timeline: {
+				description: "Development timeline",
+				required: false,
+				options: ["quick-prototype", "standard", "comprehensive", "enterprise"],
 			},
 		},
 	}
 }
 
-// Project Speicifiaction Format
+// Project Specification Format
 function getProjectSpecificationFormat(): string {
 	return `
 	## Project Specification Format
@@ -78,50 +154,120 @@ function getProjectSpecificationFormat(): string {
 
 	### Project Overview
 	- **Project Name**: [Extracted or inferred project name]
-	- **Project Type**: [Type of web application (portfolio, e-commerce, blog, etc.)]
-	- **Target Audience**: [Who will use this application]
-	- **Project Goals**: [Main objectives and purpose]
+	- **Project Type**: [Type of web application (portfolio, e-commerce, blog, dashboard, landing page, etc.)]
+	- **Target Audience**: [Who will use this application - demographics, user personas]
+	- **Project Goals**: [Main objectives and purpose - business goals, user goals]
+	- **Success Metrics**: [How to measure project success - KPIs, conversion rates, engagement metrics]
+	- **Timeline**: [Expected development timeline and milestones]
 
 	### Technical Requirements
-	- **Preferred Technologies**: [Frontend frameworks, libraries, tools]
-	- **Architecture**: [Basic structure and approach]
-	- **Platform**: [Web, mobile-responsive, PWA, etc.]
+	- **Preferred Technologies**: [Frontend frameworks, libraries, tools - React, Vue, Angular, etc.]
+	- **Backend Requirements**: [Server-side needs - API, database, authentication]
+	- **Architecture**: [Basic structure and approach - SPA, MPA, microservices, etc.]
+	- **Platform**: [Web, mobile-responsive, PWA, desktop app, etc.]
+	- **Browser Support**: [Target browsers and versions - Chrome, Firefox, Safari, Edge]
+	- **Performance Requirements**: [Load times, Core Web Vitals, optimization needs]
+	- **Security Requirements**: [Authentication, authorization, data protection needs]
+	- **SEO Requirements**: [Search engine optimization needs, meta tags, structured data]
+	- **Accessibility**: [WCAG compliance level, screen reader support, keyboard navigation]
 
 	### Design Specifications
-	- **Design Style**: [Modern, minimalist, professional, etc.]
+	- **Design Style**: [Modern, minimalist, professional, playful, corporate, etc.]
+	- **Brand Guidelines**: [Logo usage, brand colors, visual identity requirements]
 	- **Color Palette**: 
 	  - Primary Color: [Main brand color with hex code]
-	  - Secondary Colors: [Supporting colors]
-	  - Accent Colors: [Call-to-action and highlight colors]
+	  - Secondary Colors: [Supporting colors with hex codes]
+	  - Accent Colors: [Call-to-action and highlight colors with hex codes]
+	  - Neutral Colors: [Background, text, border colors with hex codes]
+	  - Color Accessibility: [Contrast ratios, color blindness considerations]
 	- **Typography**: 
-	  - Heading Fonts: [Font family for titles and headings]
-	  - Body Fonts: [Font family for content text]
-	  - Font Sizes: [Responsive text scaling approach]
+	  - Heading Fonts: [Font family for titles and headings with fallbacks]
+	  - Body Fonts: [Font family for content text with fallbacks]
+	  - Font Sizes: [Responsive text scaling approach - rem/em units, breakpoint-specific sizes]
+	  - Font Weights: [Light, regular, medium, bold, extra-bold usage]
+	  - Line Heights: [Readability considerations, spacing between lines]
 	- **Layout & Spacing**:
-	  - Grid System: [12-column, flexbox, css grid approach]
-	  - Breakpoints: [Mobile: 768px, Tablet: 1024px, Desktop: 1200px+]
-	  - Spacing Scale: [Consistent margin/padding system]
+	  - Grid System: [12-column, flexbox, css grid approach with specific breakpoints]
+	  - Breakpoints: [Mobile: 320px, Tablet: 768px, Desktop: 1024px, Large: 1200px+]
+	  - Spacing Scale: [Consistent margin/padding system - 4px, 8px, 16px, 24px, 32px, 48px, 64px]
+	  - Container Widths: [Max-widths, padding, centering approach]
+	  - Section Spacing: [Vertical rhythm, section-to-section spacing]
 	- **UI Components**:
-	  - Button Styles: [Primary, secondary, outline variations]
-	  - Form Elements: [Input fields, dropdowns, checkboxes styling]
-	  - Navigation: [Header, sidebar, breadcrumb styles]
+	  - Button Styles: [Primary, secondary, outline, ghost variations with states]
+	  - Form Elements: [Input fields, dropdowns, checkboxes, radio buttons styling]
+	  - Navigation: [Header, sidebar, breadcrumb, footer, mobile menu styles]
+	  - Cards & Containers: [Content containers, card layouts, modal styles]
+	  - Tables & Lists: [Data presentation, list styling, pagination]
+	  - Loading States: [Skeleton screens, spinners, progress indicators]
 	- **Visual Effects**:
-	  - Shadows: [Box shadows, text shadows]
-	  - Border Radius: [Corner rounding approach]
-	  - Animations: [Hover effects, transitions, loading states]
+	  - Shadows: [Box shadows, text shadows with specific values]
+	  - Border Radius: [Corner rounding approach - 4px, 8px, 16px, full rounded]
+	  - Animations: [Hover effects, transitions, loading states, micro-interactions]
+	  - Gradients: [Background gradients, button gradients, overlay effects]
+	  - Icons: [Icon system, icon library, icon sizing and spacing]
+
+	### Content & Media Requirements
+	- **Content Strategy**: [Type of content, content management approach]
+	- **Images & Media**: [Image formats, sizes, optimization requirements]
+	- **Icons & Illustrations**: [Icon style, illustration style, icon library]
+	- **Video Content**: [Video player requirements, autoplay settings, controls]
+	- **Interactive Elements**: [Maps, charts, sliders, carousels, tooltips]
+	- **Multilingual Support**: [Internationalization needs, RTL support]
 
 	### Feature Requirements
 	- **Core Features**: [Essential functionality that must be included]
-	- **Additional Features**: [Nice-to-have features]
+	- **Additional Features**: [Nice-to-have features, future enhancements]
 	- **User Interactions**: [How users will interact with the application]
+	- **Data Management**: [Data storage, retrieval, caching strategies]
+	- **User Authentication**: [Login, registration, password reset, social login]
+	- **User Profiles**: [User account management, profile customization]
+	- **Search Functionality**: [Search algorithms, filters, sorting options]
+	- **Notifications**: [Email, push, in-app notification systems]
+	- **Analytics Integration**: [Google Analytics, custom tracking, event monitoring]
+	- **Third-party Integrations**: [Payment gateways, social media, APIs]
 
-	### Page Structure
-	- **Required Pages**: [List of necessary pages/sections]
-	- **Content Strategy**: [Type of content for each page]
-	- **Navigation**: [How users will move through the site]
+	### Page Structure & Navigation
+	- **Required Pages**: [List of necessary pages/sections with descriptions]
+	- **Page Hierarchy**: [Site structure, parent-child page relationships]
+	- **Navigation Structure**: [Main menu, secondary navigation, breadcrumbs]
+	- **URL Structure**: [SEO-friendly URLs, routing strategy]
+	- **Mobile Navigation**: [Hamburger menu, bottom navigation, gesture support]
+	- **Footer Content**: [Links, social media, contact information, legal pages]
+
+	### User Experience (UX) Requirements
+	- **User Journey**: [User flow, conversion funnel, key user paths]
+	- **Information Architecture**: [Content organization, categorization, labeling]
+	- **Usability Requirements**: [Ease of use, learnability, efficiency goals]
+	- **Error Handling**: [404 pages, form validation, error messages]
+	- **Loading States**: [Skeleton screens, progress indicators, optimistic updates]
+	- **Feedback Mechanisms**: [Success messages, confirmation dialogs, tooltips]
+
+	### Performance & Optimization
+	- **Loading Speed**: [Target load times, Core Web Vitals goals]
+	- **Image Optimization**: [WebP support, lazy loading, responsive images]
+	- **Code Splitting**: [Bundle optimization, lazy loading strategies]
+	- **Caching Strategy**: [Browser caching, CDN usage, service worker]
+	- **Minification**: [CSS/JS minification, compression, tree shaking]
+
+	### Testing & Quality Assurance
+	- **Cross-browser Testing**: [Browser compatibility requirements]
+	- **Mobile Testing**: [Device testing, responsive design validation]
+	- **Performance Testing**: [Lighthouse scores, load time testing]
+	- **Accessibility Testing**: [Screen reader testing, keyboard navigation]
+	- **User Testing**: [Usability testing, user feedback collection]
+
+	### Deployment & Hosting
+	- **Hosting Platform**: [Vercel, Netlify, AWS, custom server, etc.]
+	- **Domain & SSL**: [Domain requirements, HTTPS implementation]
+	- **Environment Setup**: [Development, staging, production environments]
+	- **CI/CD Pipeline**: [Automated testing, deployment process]
+	- **Monitoring**: [Error tracking, performance monitoring, uptime monitoring]
 
 	### Implementation Details
 	- **Development Approach**: [Step-by-step implementation strategy]
+	- **Code Organization**: [Component structure, file naming conventions]
+	- **State Management**: [Redux, Context API, Zustand, etc.]
+	- **API Integration**: [REST/GraphQL, error handling, loading states]
 	- **File Structure**: 
 	  - Project Organization: [Root directory structure and main folders]
 	  - Asset Management: [Images, fonts, icons, media files organization]
@@ -129,8 +275,17 @@ function getProjectSpecificationFormat(): string {
 	  - Configuration Files: [Settings, environment, build configuration placement]
 	  - Documentation: [README, docs, comments structure]
 	  - Build Output: [Distribution, compiled files location]
+	- **Development Tools**: [Linting, formatting, pre-commit hooks]
+	- **Package Management**: [Dependencies, dev dependencies, version management]
 
-	Use this format to create a clear, actionable specification that a developer can immediately use to build the project.`
+	### Maintenance & Support
+	- **Content Updates**: [Content management system, update process]
+	- **Bug Fixes**: [Issue tracking, bug reporting process]
+	- **Feature Updates**: [Update schedule, version management]
+	- **Backup Strategy**: [Data backup, code backup, disaster recovery]
+	- **Documentation**: [User guides, technical documentation, API docs]
+
+	Use this format to create a clear, actionable specification that a developer can immediately use to build the project. Each section should contain specific, measurable, and implementable details rather than vague descriptions.`
 }
 
 function buildAnalysisPrompt(
@@ -233,7 +388,7 @@ export async function refinePrompt(prompt: string, apiHandler: ApiHandler, taskI
 
 		return {
 			originalPrompt: prompt,
-			refinedPrompt: refinedPrompt.refinedPrompt,
+			refinedPrompt: `## Original User Prompt\n${prompt}\n\n${refinedPrompt.refinedPrompt}`,
 			explanation: refinedPrompt.explanation,
 			needsMoreInfo: refinedPrompt.needsMoreInfo || false,
 			followUpQuestions: refinedPrompt.followUpQuestions || [],

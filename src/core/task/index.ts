@@ -178,7 +178,6 @@ export class Task {
 		mode: Mode,
 		strictPlanModeEnabled: boolean,
 		sidebarController: Controller,
-		phaseTracker: PhaseTracker,
 		isPhaseRoot: boolean = false,
 		shellIntegrationTimeout: number,
 		terminalReuseEnabled: boolean,
@@ -233,7 +232,6 @@ export class Task {
 		this.cwd = cwd
 		this.cacheService = cacheService
 
-		this.taskState.phaseTracker = phaseTracker
 		this.taskState.isPhaseRoot = isPhaseRoot
 
 		// Set up MCP notification callback for real-time notifications
@@ -338,8 +336,6 @@ export class Task {
 			telemetryService.captureTaskCreated(this.taskId, currentProvider)
 		}
 
-		this.taskState.phaseTracker = phaseTracker
-
 		this.toolExecutor = new ToolExecutor(
 			this.context,
 			this.taskState,
@@ -443,10 +439,13 @@ export class Task {
 		let didWorkspaceRestoreFail = false
 
 		let phaseIdx
-		if (this.taskState.phaseTracker && (phaseIdx = this.taskState.phaseTracker.getPhaseByTaskId(this.taskId)) > 0) {
-			this.taskState.phaseTracker.resetPhaseStatus(phaseIdx)
-			this.taskState.phaseTracker.updateTaskIdPhase(phaseIdx, this.taskId)
-			this.taskState.phaseTracker.currentPhaseIndex = phaseIdx
+		if (
+			this.sidebarController.phaseTracker &&
+			(phaseIdx = this.sidebarController.phaseTracker.getPhaseByTaskId(this.taskId)) > 0
+		) {
+			this.sidebarController.phaseTracker.resetPhaseStatus(phaseIdx)
+			this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIdx, this.taskId)
+			this.sidebarController.phaseTracker.currentPhaseIndex = phaseIdx
 		}
 
 		switch (restoreType) {
@@ -1125,11 +1124,11 @@ export class Task {
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			phaseAwarePrompt =
-				this.taskState.phaseTracker && !this.taskState.isPhaseRoot
+				this.sidebarController.phaseTracker && !this.taskState.isPhaseRoot
 					? buildPhasePrompt(
-							this.taskState.phaseTracker.currentPhase,
-							this.taskState.phaseTracker.totalPhases,
-							this.taskState.phaseTracker.getProjectOverview(),
+							this.sidebarController.phaseTracker.currentPhase,
+							this.sidebarController.phaseTracker.totalPhases,
+							this.sidebarController.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
 			if (this.taskState.isPhaseRoot) {
@@ -1154,6 +1153,7 @@ export class Task {
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
+				// TODO: PLANNING
 				await this.executePlanningPhase(userContent)
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
@@ -1165,16 +1165,18 @@ export class Task {
 		}
 	}
 
+	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.taskState.phaseTracker) {
+		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
 		try {
+			// TODO: PLANNING
 			const {
 				projOverview,
 				executionPlan,
@@ -1182,10 +1184,10 @@ export class Task {
 				phases: planSteps,
 			} = await parsePlanFromOutput(firstAssistantMessage)
 			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
-			this.taskState.phaseTracker!.projOverview = projOverview
-			this.taskState.phaseTracker!.executionPlan = executionPlan
-			this.taskState.phaseTracker!.requirements = requirements
-			this.taskState.phaseTracker.addPhasesFromPlan(planSteps)
+			this.sidebarController.phaseTracker!.projOverview = projOverview
+			this.sidebarController.phaseTracker!.executionPlan = executionPlan
+			this.sidebarController.phaseTracker!.requirements = requirements
+			this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
 
 			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 		} catch (error) {
@@ -1221,24 +1223,22 @@ export class Task {
 		this.taskState.newPhaseOpened = false
 
 		// Mark the first phase as complete
-		this.taskState.phaseTracker.markCurrentPhaseComplete()
-		this.taskState.phaseTracker.currentPhaseIndex++
-		const next = this.taskState.phaseTracker.phaseStates[this.taskState.phaseTracker.currentPhaseIndex]
-		next.status = PhaseStatus.InProgress
-		next.startTime = Date.now()
+		await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
+		this.sidebarController.phaseTracker.updatePhase()
+		await this.sidebarController.phaseTracker.saveCheckpoint()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
-		while (!this.taskState.phaseTracker!.isAllComplete()) {
-			const phase = this.taskState.phaseTracker.currentPhase
-			const total = this.taskState.phaseTracker.totalPhases
-			const phaseIndex = this.taskState.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.taskState.phaseTracker.getProjectOverview())
+		while (!this.sidebarController.phaseTracker!.isAllComplete()) {
+			const phase = this.sidebarController.phaseTracker.currentPhase
+			const total = this.sidebarController.phaseTracker.totalPhases
+			const phaseIndex = this.sidebarController.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.sidebarController.phaseTracker.getProjectOverview())
 
-			this.taskState.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
+			this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
 
 			if (!this.taskState.newPhaseOpened) {
 				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
@@ -1248,12 +1248,11 @@ export class Task {
 			}
 			this.taskState.newPhaseOpened = false
 		}
-		await this.say("text", "All phases completed successfully!")
 		this.sidebarController.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
@@ -1261,9 +1260,6 @@ export class Task {
 
 		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
 		this.taskState.phaseFinished = phaseFinished
-		if (phaseFinished) {
-			this.sidebarController.onTaskCompleted()
-		}
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
@@ -2311,7 +2307,7 @@ export class Task {
 	}
 
 	public getPhaseTracker(): PhaseTracker | undefined {
-		return this.taskState.phaseTracker
+		return this.sidebarController.phaseTracker
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {

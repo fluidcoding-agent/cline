@@ -65,7 +65,6 @@ export class TaskState {
 	lastAutoCompactTriggerIndex?: number
 
 	// Phase Planning
-	phaseTracker?: PhaseTracker
 	isPhaseRoot: boolean = false
 	newPhaseOpened: boolean = true
 	phaseFinished: boolean = false

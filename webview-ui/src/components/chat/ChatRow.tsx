@@ -1677,7 +1677,9 @@ export const ChatRowContent = memo(
 											color: normalColor,
 											marginBottom: "-1.5px",
 										}}></span>
-									<span style={{ color: normalColor, fontWeight: "bold" }}>Cline wants to start a new task:</span>
+									<span style={{ color: normalColor, fontWeight: "bold" }}>
+										Cline wants to start a new task:
+									</span>
 								</div>
 								<NewTaskPreview context={message.text || ""} />
 							</>

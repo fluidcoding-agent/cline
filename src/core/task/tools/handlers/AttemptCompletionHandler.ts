@@ -133,9 +133,9 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		let text: string | undefined
 		let images: string[] | undefined
 		let completionFiles: string[] | undefined
-		config.sidebarController.onPhaseCompleted(/* openNewTask */ true)
+		config.sidebarController.onPhaseCompleted()
 		if (config.taskState.phaseFinished) {
-			if (config.taskState.phaseTracker?.isAllComplete()) {
+			if (config.sidebarController.phaseTracker?.isAllComplete()) {
 				const {
 					response,
 					text,
@@ -149,10 +149,10 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 				await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
 				await config.callbacks.saveCheckpoint()
 			} else {
-				const phase = config.taskState.phaseTracker?.currentPhase
-				const total = config.taskState.phaseTracker?.totalPhases
+				const phase = config.sidebarController.phaseTracker?.currentPhase
+				const total = config.sidebarController.phaseTracker?.totalPhases
 				const nextPhasePrompt = phase
-					? buildPhasePrompt(phase, total ?? 1, config.taskState.phaseTracker?.getProjectOverview() || "")
+					? buildPhasePrompt(phase, total ?? 1, config.sidebarController.phaseTracker?.getProjectOverview() || "")
 					: ""
 				const {
 					response,

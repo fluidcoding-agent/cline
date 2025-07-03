@@ -2368,7 +2368,7 @@ export class ToolExecutor {
 								await this.saveCheckpoint()
 							} else {
 								const result = await this.sidebarController.task?.askUserApproval(
-									"ask_question",
+									"ask_proceed",
 									PROMPTS.MOVE_NEXT_PHASE_ASK,
 								)
 								if (!result) {

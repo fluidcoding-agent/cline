@@ -21,7 +21,14 @@ import { BrowserSettings } from "@shared/BrowserSettings"
 import { ChatSettings } from "@shared/ChatSettings"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import { ClineApiReqCancelReason, ClineApiReqInfo, ClineAsk, ClineMessage, ClineSay } from "@shared/ExtensionMessage"
+import {
+	ClineApiReqCancelReason,
+	ClineApiReqInfo,
+	ClineAsk,
+	ClineAskQuestion,
+	ClineMessage,
+	ClineSay,
+} from "@shared/ExtensionMessage"
 import { getApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, LanguageDisplay } from "@shared/Languages"
@@ -82,10 +89,15 @@ import { MessageStateHandler } from "./message-state"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { formatErrorWithStatusCode, updateApiReqMsg } from "./utils"
-import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile, PhaseStatus } from "../planning/phase-tracker"
+// planning
+import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../planning/phase-tracker"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
+import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff } from "../planning/utils"
 import { Controller } from "../controller"
+// refinePrompt
+import { getAllExtensionState } from "../storage/state"
+import { refinePrompt } from "./prompt-refinement"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
@@ -137,16 +149,10 @@ export class Task {
 
 	// Message and conversation state
 	messageStateHandler: MessageStateHandler
+	// conversationHistoryDeletedRange?: [number, number]
+	apiConversationHistory: Anthropic.MessageParam[] = []
+	clineMessages: ClineMessage[] = []
 
-<<<<<<< HEAD
-	// phase tracking
-	private phaseTracker?: PhaseTracker
-	private isPhaseRoot: boolean = false
-	public newPhaseOpened: boolean = true
-	private phaseFinished: boolean = false
-
-=======
->>>>>>> 0fc34c16 (Api request finished for planning (#41))
 	constructor(
 		context: vscode.ExtensionContext,
 		mcpHub: McpHub,
@@ -160,7 +166,6 @@ export class Task {
 		browserSettings: BrowserSettings,
 		chatSettings: ChatSettings,
 		sidebarController: Controller,
-		phaseTracker: PhaseTracker,
 		isPhaseRoot: boolean = false,
 		shellIntegrationTimeout: number,
 		terminalReuseEnabled: boolean,
@@ -200,7 +205,6 @@ export class Task {
 		this.enableCheckpoints = enableCheckpointsSetting
 		this.cwd = cwd
 
-		this.taskState.phaseTracker = phaseTracker
 		this.taskState.isPhaseRoot = isPhaseRoot
 
 		// Set up MCP notification callback for real-time notifications
@@ -296,8 +300,6 @@ export class Task {
 			telemetryService.captureTaskCreated(this.taskId, apiConfiguration.apiProvider)
 		}
 
-		this.taskState.phaseTracker = phaseTracker
-
 		this.toolExecutor = new ToolExecutor(
 			this.context,
 			this.taskState,
@@ -311,6 +313,7 @@ export class Task {
 			this.clineIgnoreController,
 			this.workspaceTracker,
 			this.contextManager,
+			this.sidebarController,
 			this.autoApprovalSettings,
 			this.browserSettings,
 			cwd,
@@ -376,6 +379,16 @@ export class Task {
 		}
 
 		let didWorkspaceRestoreFail = false
+
+		let phaseIdx
+		if (
+			this.sidebarController.phaseTracker &&
+			(phaseIdx = this.sidebarController.phaseTracker.getPhaseByTaskId(this.taskId)) > 0
+		) {
+			this.sidebarController.phaseTracker.resetPhaseStatus(phaseIdx)
+			this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIdx, this.taskId)
+			this.sidebarController.phaseTracker.currentPhaseIndex = phaseIdx
+		}
 
 		switch (restoreType) {
 			case "task":
@@ -970,6 +983,7 @@ export class Task {
 		} catch (error) {
 			console.error("Failed to initialize ClineIgnoreController:", error)
 		}
+
 		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
 		this.messageStateHandler.setClineMessages([])
@@ -977,62 +991,21 @@ export class Task {
 
 		await this.postStateToWebview()
 
-		let phaseAwarePrompt: string
-		phaseAwarePrompt =
-			this.phaseTracker && !this.isPhaseRoot
-				? buildPhasePrompt(
-						this.phaseTracker.currentPhase,
-						this.phaseTracker.totalPhases,
-						this.phaseTracker.getProjectOverview(),
-					)
-				: (task ?? "")
-
 		await this.say("text", task, images, files)
 		this.taskState.isInitialized = true
 
-<<<<<<< HEAD
-		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
-		let userContent: UserContent = []
-		if (this.isPhaseRoot) {
-			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
-=======
-		let finalTask = task
-		// Apply prompt refinement if enabled and task is provided
 		if (this.taskState.isPhaseRoot && task && this.autoApprovalSettings.actions.usePromptRefinement) {
 			try {
 				console.log("[Task] Applying prompt refinement...")
 				let refinedResult = await refinePrompt(task, this.api, this)
-
-				if (refinedResult.needsMoreInfo) {
-					const questionList = refinedResult.followUpQuestions.map(
-						(followUpQ) =>
-							({
-								question: followUpQ.question,
-								options: followUpQ.options,
-								selected: "",
-							}) satisfies ClineAskQuestion,
-					)
-
-					await this.askMoreQuestion(questionList)
-					for (const ques of questionList) {
-						task += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
-					}
-
-					refinedResult = await refinePrompt(task, this.api, this)
-				}
-				finalTask = refinedResult.refinedPrompt
-				await this.say("text", `Refined prompt: \n${finalTask}`)
+				task = refinedResult.refinedPrompt
 			} catch (error) {
 				console.error("[Task] Prompt refinement failed:", error)
 			}
 		}
 
-		if (
-			this.taskState.isPhaseRoot &&
-			this.autoApprovalSettings.actions.usePromptRefinement &&
-			this.autoApprovalSettings.actions.usePhasePlanning
-		) {
-			const approved = await this.askUserApproval("ask_question", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
+		if (this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePromptRefinement) {
+			const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
 			if (!approved) {
 				await this.say("text", "Proceed to Planning Phase aborted by user.")
 				return
@@ -1044,22 +1017,22 @@ export class Task {
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			phaseAwarePrompt =
-				this.taskState.phaseTracker && !this.taskState.isPhaseRoot
+				this.sidebarController.phaseTracker && !this.taskState.isPhaseRoot
 					? buildPhasePrompt(
-							this.taskState.phaseTracker.currentPhase,
-							this.taskState.phaseTracker.totalPhases,
-							this.taskState.phaseTracker.getProjectOverview(),
+							this.sidebarController.phaseTracker.currentPhase,
+							this.sidebarController.phaseTracker.totalPhases,
+							this.sidebarController.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
 			if (this.taskState.isPhaseRoot) {
-				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
+				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${task}\n</task>` }, ...imageBlocks]
 			} else {
 				userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 			}
->>>>>>> 0fc34c16 (Api request finished for planning (#41))
 		} else {
-			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+			userContent = [{ type: "text", text: `<task>\n${task}\n</task>` }, ...imageBlocks]
 		}
+
 		if (files?.length) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
@@ -1070,51 +1043,60 @@ export class Task {
 			}
 		}
 
-<<<<<<< HEAD
-		// Planning Phase
-		if (this.isPhaseRoot) {
-			await this.executePlanningPhase(userContent)
-			// await this.executePlanningPhase(phaseAwarePrompt)
-=======
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
+				// TODO: PLANNING
 				await this.executePlanningPhase(userContent)
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
-
 			// Execution Phase
 			await this.executeCurrentPhase()
 		} else {
 			await this.initiateTaskLoop(userContent)
->>>>>>> 0fc34c16 (Api request finished for planning (#41))
 		}
-
-		// Execution Phase
-		await this.executeCurrentPhase()
 	}
 
+	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.taskState.phaseTracker) {
+		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
+		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 		try {
-			const {
-				projOverview,
-				executionPlan,
-				requirements,
-				phases: planSteps,
-			} = await parsePlanFromOutput(firstAssistantMessage)
-			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
-			this.taskState.phaseTracker!.projOverview = projOverview
-			this.taskState.phaseTracker!.executionPlan = executionPlan
-			this.taskState.phaseTracker!.requirements = requirements
-			this.taskState.phaseTracker.addPhasesFromPlan(planSteps)
+			const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
+			// TODO: PLANNING
+			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+			// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
+			const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
+			const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch((error) => {
+				console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)
+				return { fileUri: undefined, snapshotUri: undefined }
+			})
+
+			// Create custom message that includes the file path
+			const planCheckMessage = fileUri
+				? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **File location:** \`${fileUri.fsPath}\``
+				: PROMPTS.CHECK_PLAN_ASK
+
+			const approved = await this.askUserApproval("ask_check", planCheckMessage)
+
+			let diffexisted = false
+			if (approved && fileUri && snapshotUri) {
+				diffexisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
+			} else {
+				await this.say("text", "⚠️ **Could not confirm plan: Unable to create plan files.**")
+			}
+			if (!diffexisted) {
+				this.sidebarController.phaseTracker!.projOverview = projOverview
+				this.sidebarController.phaseTracker!.executionPlan = executionPlan
+				this.sidebarController.phaseTracker!.requirements = requirements
+				this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
+			}
 
 			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 		} catch (error) {
@@ -1139,7 +1121,7 @@ export class Task {
 			// 	)
 		}
 
-		const approved = await this.askUserApproval("ask_question", PROMPTS.PROCEED_WITH_PLAN_ASK)
+		const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
 		if (!approved) {
 			await this.say("text", "Plan execution aborted by user.")
 			return
@@ -1150,31 +1132,22 @@ export class Task {
 		this.taskState.newPhaseOpened = false
 
 		// Mark the first phase as complete
-<<<<<<< HEAD
-		this.phaseTracker.markCurrentPhaseComplete()
-		this.sidebarController.onPhaseCompleted(this)
-
-		// Start execution of the first phase
-		this.newPhaseOpened = false
-		await this.executeCurrentPhase()
-=======
-		this.taskState.phaseTracker.markCurrentPhaseComplete()
-		this.taskState.phaseTracker.currentPhaseIndex++
-		const next = this.taskState.phaseTracker.phaseStates[this.taskState.phaseTracker.currentPhaseIndex]
-		next.status = PhaseStatus.InProgress
-		next.startTime = Date.now()
->>>>>>> 0fc34c16 (Api request finished for planning (#41))
+		await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
+		this.sidebarController.phaseTracker.updatePhase()
+		await this.sidebarController.phaseTracker.saveCheckpoint()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
-		while (!this.taskState.phaseTracker!.isAllComplete()) {
-			const phase = this.taskState.phaseTracker.currentPhase
-			const total = this.taskState.phaseTracker.totalPhases
-			const phaseIndex = this.taskState.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.taskState.phaseTracker.getProjectOverview())
+		while (!this.sidebarController.phaseTracker!.isAllComplete()) {
+			const phase = this.sidebarController.phaseTracker.currentPhase
+			const total = this.sidebarController.phaseTracker.totalPhases
+			const phaseIndex = this.sidebarController.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.sidebarController.phaseTracker.getProjectOverview())
+
+			this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
 
 			if (!this.taskState.newPhaseOpened) {
 				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
@@ -1184,21 +1157,18 @@ export class Task {
 			}
 			this.taskState.newPhaseOpened = false
 		}
-		await this.say("text", "All phases completed successfully!")
 		this.sidebarController.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
-		const phaseFinished = await this.initiateTaskLoop(userBlocks)
-		if (phaseFinished) {
-			this.sidebarController.onTaskCompleted()
-		}
+		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
+		this.taskState.phaseFinished = phaseFinished
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
@@ -1207,6 +1177,61 @@ export class Task {
 			return false
 		} else {
 			await this.saveCheckpoint()
+			return true
+		}
+	}
+
+	async confirmPlanAndUpdate(planUri: vscode.Uri, snapshotUri: vscode.Uri): Promise<boolean> {
+		const diff = await getPlanMarkdownDiff(planUri, snapshotUri)
+		if (!diff) {
+			await this.say("text", "✅ **No changes detected – plan already confirmed.**")
+			// Even if no changes, we still want to lock the plan and remove snapshot
+		} else {
+			// Show diff to user (use dedicated panel/webview if needed)
+			await this.say("text", `### 🔍 Detected changes in *plan.md*\n\`\`\`diff\n${diff}\n\`\`\``)
+
+			// Re-parse plan.md → update tracker
+			const mdBuf = await vscode.workspace.fs.readFile(planUri)
+			const mdRaw = Buffer.from(mdBuf).toString("utf8")
+
+			const { projOverview, executionPlan, requirements, phases } = parsePlanFromOutput(mdRaw, true)
+
+			this.sidebarController.phaseTracker!.projOverview = projOverview
+			this.sidebarController.phaseTracker!.executionPlan = executionPlan
+			this.sidebarController.phaseTracker!.requirements = requirements
+			this.sidebarController.phaseTracker!.replacePhasesFromPlan(phases)
+
+			// Save checkpoint with updated plan
+			await this.sidebarController.phaseTracker!.saveCheckpoint()
+		}
+
+		// Lock the plan: make it read-only to prevent accidental modifications
+		try {
+			// Make file read-only by removing write permissions
+			// Note: VS Code's fs API doesn't directly support chmod, but we can try through Node.js
+			const fs = await import("fs")
+			const path = planUri.fsPath
+			// Set read-only permission (0o444 = read-only for owner, group, others)
+			await fs.promises.chmod(path, 0o444)
+			await this.say("text", "🔒 **Plan file locked (read-only) to prevent accidental modifications.**")
+		} catch (error) {
+			console.warn("[confirmPlanAndUpdate] Failed to set plan file as read-only:", error)
+			await this.say("text", "⚠️ **Warning: Could not lock plan file as read-only.**")
+		}
+
+		// Remove snapshot file as it's no longer needed
+		try {
+			await vscode.workspace.fs.delete(snapshotUri)
+			console.log("text", "🗑️ **Snapshot file removed - plan is now confirmed and locked.**")
+		} catch (error) {
+			console.warn("[confirmPlanAndUpdate] Failed to delete snapshot file:", error)
+			console.log("⚠️ **Warning: Could not remove snapshot file.**")
+		}
+
+		console.log("[confirmPlanAndUpdate] Successfully Plan confirmed, tracker updated, file locked, and snapshot removed.")
+		if (!diff) {
+			return false
+		} else {
 			return true
 		}
 	}
@@ -1394,8 +1419,6 @@ export class Task {
 	}
 
 	private async initiateTaskLoop(userContent: UserContent): Promise<boolean | void> {
-		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
-
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.taskState.abort) {
@@ -1477,17 +1500,11 @@ export class Task {
 				totalChunks++
 
 				// Update UI periodically to show progress without overwhelming it
-				const now = performance.now()
+				const now = Date.now()
 				if (now - lastUpdateTime > updateInterval) {
 					// Update progress message with latest thinking content
 					// Using the partial flag to indicate this is a progressive update
-					await this.say(
-						"reasoning",
-						`Planning in progress... (${(now - start) / 1000}s)\n\n${assistantText.slice(-500)}`,
-						undefined,
-						undefined,
-						true,
-					)
+					await this.say("reasoning", `${assistantText.slice(-500)}`, undefined, undefined, true)
 					lastUpdateTime = now
 				}
 			}
@@ -2223,7 +2240,7 @@ export class Task {
 	}
 
 	public getPhaseTracker(): PhaseTracker | undefined {
-		return this.taskState.phaseTracker
+		return this.sidebarController.phaseTracker
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {

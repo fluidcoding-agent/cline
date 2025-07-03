@@ -106,7 +106,8 @@ export type ClineAsk =
 	| "condense"
 	| "summarize_task"
 	| "report_bug"
-	| "ask_question"
+	| "ask_proceed"
+	| "ask_check"
 
 export type ClineSay =
 	| "task"

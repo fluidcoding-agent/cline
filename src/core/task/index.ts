@@ -1048,8 +1048,8 @@ export class Task {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
 				// TODO: PLANNING
-				// await this.executePlanningPhase(userContent)
-				await this.executePlanningPhase(phaseAwarePrompt)
+				await this.executePlanningPhase(userContent)
+				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
 			await this.executeCurrentPhase()
@@ -1059,9 +1059,9 @@ export class Task {
 	}
 
 	// TODO: PLANNING
-	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-	private async executePlanningPhase(userBlocks: string): Promise<void> {
-		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		// private async executePlanningPhase(userBlocks: string): Promise<void> {
+		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
@@ -1071,8 +1071,8 @@ export class Task {
 		try {
 			const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
 			// TODO: PLANNING
-			// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
-			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
+			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+			// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
 			const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
 			const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch((error) => {
 				console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)

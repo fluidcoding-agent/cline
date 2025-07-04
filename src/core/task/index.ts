@@ -1005,10 +1005,12 @@ export class Task {
 		}
 
 		if (this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePromptRefinement) {
-			const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
-			if (!approved) {
-				await this.say("text", "Proceed to Planning Phase aborted by user.")
+			const approveProceed = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
+			if (!approveProceed) {
+				await this.say("text", "사용자가 계획 단계 진행을 중단했습니다.")
 				return
+			} else {
+				this.autoApprovalSettings.actions.usePhasePlanning = true
 			}
 		}
 
@@ -1039,23 +1041,27 @@ export class Task {
 				})
 			}
 		}
-
+		let planned
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
 				// TODO: PLANNING
-				await this.executePlanningPhase(userContent)
+				planned = await this.executePlanningPhase(userContent)
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
-			await this.executeCurrentPhase()
+			if (planned) {
+				await this.executeCurrentPhase()
+			} else {
+				await this.initiateTaskLoop(userContent)
+			}
 		} else {
 			await this.initiateTaskLoop(userContent)
 		}
 	}
 
 	// TODO: PLANNING
-	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+	private async executePlanningPhase(userBlocks: UserContent): Promise<boolean> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.sidebarController.phaseTracker) {
@@ -1077,61 +1083,73 @@ export class Task {
 
 			// Create custom message that includes the file path
 			const planCheckMessage = fileUri
-				? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **File location:** \`${fileUri.fsPath}\``
+				? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **파일 위치:** \`${fileUri.fsPath}\``
 				: PROMPTS.CHECK_PLAN_ASK
 
-			const approved = await this.askUserApproval("ask_check", planCheckMessage)
+			const approveCheck = await this.askUserApproval("ask_check", planCheckMessage)
 
-			let diffexisted = false
-			if (approved && fileUri && snapshotUri) {
-				diffexisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
+			let diffExisted = false
+			if (approveCheck && fileUri && snapshotUri) {
+				diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
 			} else {
-				await this.say("text", "⚠️ **Could not confirm plan: Unable to create plan files.**")
+				await this.say("text", "⚠️ **계획을 확인할 수 없습니다: 계획 파일을 생성할 수 없습니다.**")
 			}
-			if (!diffexisted) {
+			if (!diffExisted) {
 				this.sidebarController.phaseTracker!.projOverview = projOverview
 				this.sidebarController.phaseTracker!.executionPlan = executionPlan
 				this.sidebarController.phaseTracker!.requirements = requirements
 				this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
 			}
 
-			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
+			await this.say("text", `## 📝 제안된 계획 (단계별 계획):\n\n${executionPlan}`)
+
+			const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
+			if (!approved) {
+				await this.say("text", "Plan execution aborted by user.")
+				return false // Abort planning phase
+			}
+
+			// Planning phase is complete, disabling root mode
+			this.taskState.isPhaseRoot = false
+			this.taskState.newPhaseOpened = false
+
+			// Mark the first phase as complete
+			await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
+			this.sidebarController.phaseTracker.updatePhase()
+			await this.sidebarController.phaseTracker.saveCheckpoint()
 		} catch (error) {
-			await this.say(
-				"text",
-				`## Planning phase failed..\n\n If you want to proceed without a plan, please type 'continue' to skip the planning phase.`,
-			) // TODO: (sa)
+			this.taskState.consecutivePlanningRetryCount += 1
+			const approveRetry = await this.askUserApproval("ask_retry", PROMPTS.RETRY_PLAN_ASK)
+			if (approveRetry && this.taskState.consecutivePlanningRetryCount < 3) {
+				await this.say("text", "🔄 **계획을 다시 시도합니다...**")
+				// Retry the planning phase
+				await this.executePlanningPhase(userBlocks)
+			} else if (approveRetry && this.taskState.consecutivePlanningRetryCount >= 3) {
+				await this.say(
+					"text",
+					`⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**\n\n` +
+						`계획 단계가 실패한 이유는 다음과 같습니다:\n\n${error instanceof Error ? error.message : "Unknown error"}`, // TODO: (sa)
+				)
+				this.taskState.consecutivePlanningRetryCount = 0 // Reset retry count after skipping
 
-			// Mark planning phase as skipped and update state
-			// 	this.taskState.phaseTracker?.markCurrentPhaseComplete()
-			// 	this.taskState.isPhaseRoot = false
-			// 	this.taskState.newPhaseOpened = false
+				// Planning failed, proceed with normal task execution
+				// this.taskState.isPhaseRoot = false
+				// this.taskState.newPhaseOpened = false
+				return false // Exit planning phase since we're now in normal execution
+			} else {
+				await this.say(
+					"text",
+					`계획 단계가 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.\n\n` +
+						`계획 단계가 실패한 이유는 다음과 같습니다:\n\n${error instanceof Error ? error.message : "Unknown error"}`, // TODO: (sa)
+				)
 
-			// 	// Provide clear recovery instructions
-			// 	await this.say(
-			// 		"text",
-			// 		`The system has automatically marked the planning phase as complete.
-			// You may now continue with the next phase or provide new instructions.`,
-			// 		undefined,
-			// 		undefined,
-			// 		false,
-			// 	)
+				// Planning failed, proceed with normal task execution
+				// this.taskState.isPhaseRoot = false
+				// this.taskState.newPhaseOpened = false
+				return false // Exit planning phase since we're now in normal execution
+			}
 		}
-
-		const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
-		if (!approved) {
-			await this.say("text", "Plan execution aborted by user.")
-			return
-		}
-
-		// Planning phase is complete, disabling root mode
-		this.taskState.isPhaseRoot = false
-		this.taskState.newPhaseOpened = false
-
-		// Mark the first phase as complete
-		await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
-		this.sidebarController.phaseTracker.updatePhase()
-		await this.sidebarController.phaseTracker.saveCheckpoint()
+		return true
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
@@ -1170,11 +1188,11 @@ export class Task {
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
 		const result = await this.ask(type, partialMessage)
-		if (result.response !== "yesButtonClicked") {
-			return false
-		} else {
+		if (result.response === "yesButtonClicked") {
 			await this.saveCheckpoint()
 			return true
+		} else {
+			return false
 		}
 	}
 
@@ -1466,6 +1484,7 @@ export class Task {
 
 		// reuse the existing streaming machinery
 		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
+		// const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-3-7-sonnet-20250219")
 		let assistantText = ""
 		const start = performance.now()
 

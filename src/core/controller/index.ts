@@ -136,7 +136,7 @@ export class Controller {
 	 * 새 task + 새 PhaseTracker를 생성한다.
 	 * @returns true if task was created, false if cancelled
 	 */
-	public async spawnNewTask(newPrompt?: string, images?: string[]): Promise<boolean> {
+	public async spawnNewTask(newPrompt?: string, images?: string[], files?: string[]): Promise<boolean> {
 		// initTask() already clears any existing task and phase tracker
 		const selection = await vscode.window.showInformationMessage(
 			"Planning 중 새로운 Task 생성 시 기존 Planning이 초기화 됩니다. \n 새로운 Task를 생성하시겠습니까?",

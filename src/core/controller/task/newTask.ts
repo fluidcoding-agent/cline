@@ -11,9 +11,9 @@ import { handleFileServiceRequest } from "../file"
  */
 export async function newTask(controller: Controller, request: NewTaskRequest): Promise<Empty> {
 	if (controller.phaseTracker === undefined) {
-		await controller.initTask(request.text, request.images)
+		await controller.initTask(request.text, request.images, request.files)
 	} else {
-		const taskCreated = await controller.spawnNewTask(request.text, request.images)
+		const taskCreated = await controller.spawnNewTask(request.text, request.images, request.files)
 		if (!taskCreated) {
 			// User cancelled the task creation, don't return Empty.create()
 			// This will prevent the gRPC response from being sent immediately

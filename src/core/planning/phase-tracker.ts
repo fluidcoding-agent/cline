@@ -807,28 +807,16 @@ export class PhaseTracker {
 
 	public async deleteCheckpoint(): Promise<void> {
 		try {
-			// 1) 저장 경로 계산 (saveCheckpoint와 동일)
-			let baseUri: vscode.Uri
-			const ws = vscode.workspace.workspaceFolders
-			if (ws && ws.length > 0) {
-				baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
-			} else {
-				baseUri = vscode.Uri.joinPath(this.controller.context.globalStorageUri, ".cline")
-			}
+			const checkpointUri = this.checkpointFileUri
 
-			// 2) phase-checkpoint.json 파일 경로 지정
-			const checkpointUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
-
-			// 3) 파일 존재 여부 확인
 			try {
 				const stat = await vscode.workspace.fs.stat(checkpointUri)
 				console.log(`[deleteCheckpoint] File exists at: ${checkpointUri.toString()}`)
 			} catch (statError) {
 				console.log(`[deleteCheckpoint] File does not exist at: ${checkpointUri.toString()}`)
-				return // 파일이 없으면 삭제할 필요 없음
+				return
 			}
 
-			// 4) 파일 삭제 시도
 			await vscode.workspace.fs.delete(checkpointUri, {
 				recursive: false,
 				useTrash: false,

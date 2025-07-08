@@ -1100,6 +1100,7 @@ export class Task {
 				if (!this.sidebarController.phaseTracker) {
 					throw new Error("PhaseTracker not initialized")
 				}
+				this.sidebarController.phaseTracker.updateTaskIdPhase(0, this.taskId)
 				// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
@@ -1124,14 +1125,11 @@ export class Task {
 					? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **파일 위치:** \`${fileUri.fsPath}\``
 					: PROMPTS.CHECK_PLAN_ASK
 
-				const approveCheck = await this.askUserApproval("ask_check", planCheckMessage)
+				const planConfirmed = await this.askUserApproval("ask_check", planCheckMessage)
 
 				let diffExisted = false
-				if (approveCheck && fileUri && snapshotUri) {
+				if (planConfirmed && fileUri && snapshotUri) {
 					diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
-				} else {
-					await this.say("text", "⚠️ **계획을 확인할 수 없습니다: 계획 파일을 생성할 수 없습니다.**")
-					return false // Exit planning phase since plan file creation failed
 				}
 				if (!diffExisted) {
 					this.sidebarController.phaseTracker!.projOverview = projOverview
@@ -1142,9 +1140,11 @@ export class Task {
 
 				await this.say("text", `## 📝 제안된 계획 (단계별 계획):\n\n${executionPlan}`)
 
-				const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
-				if (!approved) {
+				const proceedApproved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
+				if (!proceedApproved) {
 					await this.say("text", "🚫 **계획 실행이 취소되었습니다.**\n\n사용자가 제안된 계획의 실행을 중단했습니다.")
+					this.taskState.isPhaseRoot = false
+					this.sidebarController.phaseTracker!.markCurrentPhaseSkipped(/** skipRest */ true)
 					return false // Abort planning phase
 				}
 

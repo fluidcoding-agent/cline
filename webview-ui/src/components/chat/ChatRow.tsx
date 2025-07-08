@@ -1412,8 +1412,23 @@ export const ChatRowContent = memo(
 											marginBottom: "-1.5px",
 										}}></span>
 									<span style={{ color: normalColor, fontWeight: "bold" }}>
-										Cline wants to start a new task:
+										🚀 Cline이 새 작업을 시작하려고 합니다:
 									</span>
+								</div>
+								<Markdown markdown={message.text || ""} />
+							</>
+						)
+					case "ask_retry":
+						return (
+							<>
+								<div style={headerStyle}>
+									<span
+										className="codicon codicon-debug-restart"
+										style={{
+											color: normalColor,
+											marginBottom: "-1.5px",
+										}}></span>
+									<span style={{ color: normalColor, fontWeight: "bold" }}>💬 Cline이 질문드립니다:</span>
 								</div>
 								<Markdown markdown={message.text || ""} />
 							</>
@@ -1428,7 +1443,7 @@ export const ChatRowContent = memo(
 											color: normalColor,
 											marginBottom: "-1.5px",
 										}}></span>
-									<span style={{ color: normalColor, fontWeight: "bold" }}>Cline requires to check:</span>
+									<span style={{ color: normalColor, fontWeight: "bold" }}>🔍 Cline이 확인을 요청합니다:</span>
 								</div>
 								<Markdown markdown={message.text || ""} />
 							</>

@@ -185,6 +185,7 @@ export class Controller {
 		)
 		if (selection === "Yes") {
 			this.phaseTracker?.deleteCheckpoint()
+			this.phaseTracker?.deletePlanMD()
 			this.phaseTracker = undefined
 			await this.initTask(newPrompt, images, files)
 			return true
@@ -841,26 +842,8 @@ export class Controller {
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
 		// this.phaseTracker = undefined // removes reference to it, so once promises end it will be garbage collected
 		if (this.phaseTracker?.isAllComplete()) {
-			try {
-				let baseUri: vscode.Uri
-				const ws = vscode.workspace.workspaceFolders
-
-				if (ws && ws.length > 0) {
-					baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
-				} else {
-					baseUri = vscode.Uri.joinPath(this.context.globalStorageUri, ".cline")
-				}
-
-				const checkpointPath = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
-
-				try {
-					await vscode.workspace.fs.delete(checkpointPath, { recursive: false, useTrash: false })
-				} catch {
-					// Ignore errors, such as if file doesn't exist
-				}
-			} catch (e) {
-				console.error("Error clearing checkpoint file:", e)
-			}
+			this.phaseTracker?.deleteCheckpoint()
+			this.phaseTracker?.deletePlanMD()
 		}
 	}
 

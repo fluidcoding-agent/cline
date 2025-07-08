@@ -68,4 +68,5 @@ export class TaskState {
 	isPhaseRoot: boolean = false
 	newPhaseOpened: boolean = true
 	phaseFinished: boolean = false
+	consecutivePlanningRetryCount: number = 0
 }

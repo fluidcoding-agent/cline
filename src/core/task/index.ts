@@ -90,7 +90,7 @@ import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { formatErrorWithStatusCode, updateApiReqMsg } from "./utils"
 // planning
-import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../planning/phase-tracker"
+import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile, PhaseStatus } from "../planning/phase-tracker"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
 import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff } from "../planning/utils"
@@ -1005,10 +1005,12 @@ export class Task {
 		}
 
 		if (this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePromptRefinement) {
-			const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
-			if (!approved) {
-				await this.say("text", "Proceed to Planning Phase aborted by user.")
+			const approveProceed = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
+			if (!approveProceed) {
+				await this.say("text", "사용자가 계획 단계 진행을 중단했습니다.")
 				return
+			} else {
+				this.autoApprovalSettings.actions.usePhasePlanning = true
 			}
 		}
 
@@ -1024,11 +1026,8 @@ export class Task {
 							this.sidebarController.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
-			if (this.taskState.isPhaseRoot) {
-				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${task}\n</task>` }, ...imageBlocks]
-			} else {
-				userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
-			}
+
+			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${task}\n</task>` }, ...imageBlocks]
 		}
@@ -1051,7 +1050,11 @@ export class Task {
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
-			await this.executeCurrentPhase()
+			if (this.sidebarController.phaseTracker?.phaseStates[0]?.status === PhaseStatus.Completed) {
+				await this.executeCurrentPhase()
+			} else {
+				await this.initiateTaskLoop(userContent)
+			}
 		} else {
 			await this.initiateTaskLoop(userContent)
 		}
@@ -1060,81 +1063,102 @@ export class Task {
 	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.sidebarController.phaseTracker) {
-			throw new Error("PhaseTracker not initialized")
-		}
+		const MAX_RETRIES = 3
+		let attempts = 0
 
-		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
-		try {
-			const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
-			// TODO: PLANNING
-			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
-			// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
-			const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
-			const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch((error) => {
-				console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)
-				return { fileUri: undefined, snapshotUri: undefined }
-			})
+		while (attempts < MAX_RETRIES) {
+			try {
+				if (attempts > 0) {
+					await this.say("text", "🔄 **계획을 다시 시도합니다...**")
+				}
 
-			// Create custom message that includes the file path
-			const planCheckMessage = fileUri
-				? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **File location:** \`${fileUri.fsPath}\``
-				: PROMPTS.CHECK_PLAN_ASK
+				const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+				if (!this.sidebarController.phaseTracker) {
+					throw new Error("PhaseTracker not initialized")
+				}
+				this.sidebarController.phaseTracker.updateTaskIdPhase(0, this.taskId)
+				// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
+				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
+				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
+				// TODO: PLANNING
+				const {
+					projOverview,
+					executionPlan,
+					requirements,
+					phases: planSteps,
+				} = parsePlanFromOutput(firstAssistantMessage)
+				// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
+				const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
+				const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch(
+					(error) => {
+						console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)
+						return { fileUri: undefined, snapshotUri: undefined }
+					},
+				)
 
-			const approved = await this.askUserApproval("ask_check", planCheckMessage)
+				// Create custom message that includes the file path
+				const planCheckMessage = fileUri
+					? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **파일 위치:** \`${fileUri.fsPath}\``
+					: PROMPTS.CHECK_PLAN_ASK
 
-			let diffexisted = false
-			if (approved && fileUri && snapshotUri) {
-				diffexisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
-			} else {
-				await this.say("text", "⚠️ **Could not confirm plan: Unable to create plan files.**")
+				const planConfirmed = await this.askUserApproval("ask_check", planCheckMessage)
+
+				let diffExisted = false
+				if (planConfirmed && fileUri && snapshotUri) {
+					diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
+				}
+				if (!diffExisted) {
+					this.sidebarController.phaseTracker!.projOverview = projOverview
+					this.sidebarController.phaseTracker!.executionPlan = executionPlan
+					this.sidebarController.phaseTracker!.requirements = requirements
+					this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
+				}
+
+				await this.say("text", `## 📝 제안된 계획 (단계별 계획):\n\n${executionPlan}`)
+
+				const proceedApproved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
+				if (!proceedApproved) {
+					await this.say("text", "🚫 **계획 실행이 취소되었습니다.**\n\n사용자가 제안된 계획의 실행을 중단했습니다.")
+					this.taskState.isPhaseRoot = false
+					this.sidebarController.phaseTracker!.markCurrentPhaseSkipped(/** skipRest */ true)
+					return
+				}
+
+				// Planning phase is complete, disabling root mode
+				this.taskState.isPhaseRoot = false
+				this.taskState.newPhaseOpened = false
+				this.taskState.consecutivePlanningRetryCount = 0 // Reset on success
+
+				// Mark the first phase as complete
+				await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
+				this.sidebarController.phaseTracker.updatePhase()
+				await this.sidebarController.phaseTracker.saveCheckpoint()
+				return
+			} catch (error) {
+				attempts++
+				this.taskState.consecutivePlanningRetryCount = attempts
+				const shouldRetry = await this.askUserApproval("ask_retry", PROMPTS.RETRY_PLAN_ASK)
+				if (!shouldRetry) {
+					await this.say(
+						"text",
+						`계획 단계가 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.\n\n` +
+							`계획 단계가 실패한 이유는 다음과 같습니다:\n\n${error instanceof Error ? error.message : "Unknown error"}`, // TODO: (sa)
+					)
+
+					// Planning failed, proceed with normal task execution
+					this.taskState.isPhaseRoot = false
+					this.sidebarController.phaseTracker!.markCurrentPhaseSkipped()
+					return
+				}
 			}
-			if (!diffexisted) {
-				this.sidebarController.phaseTracker!.projOverview = projOverview
-				this.sidebarController.phaseTracker!.executionPlan = executionPlan
-				this.sidebarController.phaseTracker!.requirements = requirements
-				this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
-			}
-
-			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
-		} catch (error) {
-			await this.say(
-				"text",
-				`## Planning phase failed..\n\n If you want to proceed without a plan, please type 'continue' to skip the planning phase.`,
-			) // TODO: (sa)
-
-			// Mark planning phase as skipped and update state
-			// 	this.taskState.phaseTracker?.markCurrentPhaseComplete()
-			// 	this.taskState.isPhaseRoot = false
-			// 	this.taskState.newPhaseOpened = false
-
-			// 	// Provide clear recovery instructions
-			// 	await this.say(
-			// 		"text",
-			// 		`The system has automatically marked the planning phase as complete.
-			// You may now continue with the next phase or provide new instructions.`,
-			// 		undefined,
-			// 		undefined,
-			// 		false,
-			// 	)
 		}
 
-		const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
-		if (!approved) {
-			await this.say("text", "Plan execution aborted by user.")
-			return
-		}
+		// If we reach here, it means max retries exceeded
+		await this.say("text", `⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`)
 
-		// Planning phase is complete, disabling root mode
+		// Planning failed, proceed with normal task execution
 		this.taskState.isPhaseRoot = false
-		this.taskState.newPhaseOpened = false
-
-		// Mark the first phase as complete
-		await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
-		this.sidebarController.phaseTracker.updatePhase()
-		await this.sidebarController.phaseTracker.saveCheckpoint()
+		this.sidebarController.phaseTracker!.markCurrentPhaseSkipped()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
@@ -1173,22 +1197,26 @@ export class Task {
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
 		const result = await this.ask(type, partialMessage)
-		if (result.response !== "yesButtonClicked") {
-			return false
-		} else {
+		if (result.response === "yesButtonClicked") {
 			await this.saveCheckpoint()
 			return true
+		} else {
+			return false
 		}
 	}
 
 	async confirmPlanAndUpdate(planUri: vscode.Uri, snapshotUri: vscode.Uri): Promise<boolean> {
 		const diff = await getPlanMarkdownDiff(planUri, snapshotUri)
 		if (!diff) {
-			await this.say("text", "✅ **No changes detected – plan already confirmed.**")
-			// Even if no changes, we still want to lock the plan and remove snapshot
+			await this.say(
+				"text",
+				"✅ **변경사항이 감지되지 않았습니다**\n\n계획 파일에 수정사항이 없으므로 현재 계획을 그대로 진행합니다.",
+			)
 		} else {
-			// Show diff to user (use dedicated panel/webview if needed)
-			await this.say("text", `### 🔍 Detected changes in *plan.md*\n\`\`\`diff\n${diff}\n\`\`\``)
+			await this.say(
+				"text",
+				`### 🔍 **계획 파일에서 변경사항이 감지되었습니다**\n\n*plan.md* 파일이 수정되었습니다. 변경된 내용을 확인해주세요:\n\n\`\`\`diff\n${diff}\n\`\`\``,
+			)
 
 			// Re-parse plan.md → update tracker
 			const mdBuf = await vscode.workspace.fs.readFile(planUri)
@@ -1213,10 +1241,16 @@ export class Task {
 			const path = planUri.fsPath
 			// Set read-only permission (0o444 = read-only for owner, group, others)
 			await fs.promises.chmod(path, 0o444)
-			await this.say("text", "🔒 **Plan file locked (read-only) to prevent accidental modifications.**")
+			await this.say(
+				"text",
+				"🔒 **계획 파일이 잠겼습니다 (읽기 전용)**\n\n이제 계획 파일은 실수로 수정되지 않도록 잠금 처리되었습니다.\n\n필요할 경우, 파일 속성에서 읽기 전용을 해제하여 편집할 수 있습니다.",
+			)
 		} catch (error) {
 			console.warn("[confirmPlanAndUpdate] Failed to set plan file as read-only:", error)
-			await this.say("text", "⚠️ **Warning: Could not lock plan file as read-only.**")
+			await this.say(
+				"text",
+				"⚠️ **계획 파일을 읽기 전용으로 잠글 수 없습니다.**\n\n파일 권한 문제로 인해 계획 파일을 보호할 수 없었지만, 계획은 정상적으로 확정되었습니다. 실수로 계획 파일을 수정하지 않도록 주의해 주세요.",
+			)
 		}
 
 		// Remove snapshot file as it's no longer needed
@@ -1229,11 +1263,7 @@ export class Task {
 		}
 
 		console.log("[confirmPlanAndUpdate] Successfully Plan confirmed, tracker updated, file locked, and snapshot removed.")
-		if (!diff) {
-			return false
-		} else {
-			return true
-		}
+		return !!diff
 	}
 
 	private async resumeTaskFromHistory() {
@@ -1453,8 +1483,20 @@ export class Task {
 	}
 
 	/**
-	 * Like `initiateTaskLoop` but returns *just* the first assistant message as a string,
-	 * so that you can parse out your phases/plan.
+	 * Initiates a task loop by sending the user content to the API and capturing the first response.
+	 * This method streams the API response, showing real-time progress updates to the user.
+	 *
+	 * The function:
+	 * 1. Adds the user message to conversation history
+	 * 2. Shows an API request started message
+	 * 3. Makes an API request to Claude model
+	 * 4. Streams and displays response progress
+	 * 5. Tracks token usage and associated costs
+	 * 6. Updates the UI with intermediate thinking progress
+	 * 7. Finalizes the response and conversation state
+	 *
+	 * @param userContent - The content from the user to process in the task loop
+	 * @returns A Promise resolving to the complete text response from the assistant
 	 */
 	private async initiateTaskLoopCaptureFirstResponse(userContent: UserContent): Promise<string> {
 		// Push user turn into conversation history
@@ -1946,7 +1988,8 @@ export class Task {
 
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
-		const isNextGenModel = isClaude4ModelFamily(this.api) || isGemini2dot5ModelFamily(this.api)
+		const apiToUse = this.taskState.isPhaseRoot && forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
+		const isNextGenModel = isClaude4ModelFamily(apiToUse) || isGemini2dot5ModelFamily(apiToUse)
 		let systemPrompt = await SYSTEM_PROMPT(this.cwd, supportsBrowserUse, this.mcpHub, this.browserSettings, isNextGenModel)
 
 		await this.migratePreferredLanguageToolSetting()
@@ -2011,13 +2054,10 @@ export class Task {
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
 		// Use forced model if specified, otherwise use default api
-		let stream
-		if (this.taskState.isPhaseRoot) {
-			const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
-			stream = apiToUse.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
-		} else {
-			stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
-		}
+		const stream = apiToUse.createMessage(
+			this.taskState.isPhaseRoot ? PROMPTS.PLANNING : systemPrompt,
+			contextManagementMetadata.truncatedConversationHistory,
+		)
 
 		const iterator = stream[Symbol.asyncIterator]()
 

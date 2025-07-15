@@ -22,6 +22,7 @@ export interface RefinedPromptResult {
 	originalPrompt: string
 	explanation: string
 	success: boolean
+	fileUri?: vscode.Uri
 }
 
 // Template
@@ -160,6 +161,20 @@ async function saveRefinedPromptAsMarkdown(content: string, taskId: string): Pro
 		await vscode.workspace.fs.writeFile(fileUri, encoder.encode(content))
 		console.log(`[saveRefinedPromptAsMarkdown] Refined prompt saved: ${fileUri.toString()}`)
 
+		// Save snapshot file
+		try {
+			const snapshotFileUri = vscode.Uri.joinPath(saveUri, `refined-project-specification-${taskId}-snapshot.md`)
+			await vscode.workspace.fs.writeFile(snapshotFileUri, encoder.encode(content))
+			console.log(`[saveRefinedPromptAsMarkdown] Snapshot file created: ${snapshotFileUri.toString()}`)
+
+			// Make snapshot file read-only immediately after creation
+			const fs = await import("fs")
+			await fs.promises.chmod(snapshotFileUri.fsPath, 0o444).catch((chmodError: any) => {
+				console.warn("[saveRefinedPromptAsMarkdown] Failed to make snapshot file read-only:", chmodError)
+			})
+		} catch (error) {
+			console.error("[saveRefinedPromptAsMarkdown] Failed to save snapshot file:", error)
+		}
 		return fileUri
 	} catch (error) {
 		console.error("[saveRefinedPromptAsMarkdown] Failed to save refined prompt:", error)
@@ -267,7 +282,7 @@ export async function refinePrompt(prompt: string, apiHandler: ApiHandler, taskI
 
 		// 마크다운 파일로 저장
 		const taskId = taskInstance?.taskId || `task-${Date.now()}`
-		await saveRefinedPromptAsMarkdown(refinedPrompt.refinedPrompt, taskId)
+		const fileUri = await saveRefinedPromptAsMarkdown(refinedPrompt.refinedPrompt, taskId)
 
 		return {
 			originalPrompt: prompt,
@@ -276,6 +291,7 @@ export async function refinePrompt(prompt: string, apiHandler: ApiHandler, taskI
 			needsMoreInfo: refinedPrompt.needsMoreInfo || false,
 			followUpQuestions: refinedPrompt.followUpQuestions || [],
 			success: true,
+			fileUri: fileUri,
 		}
 	} catch (error) {
 		console.error("Error in prompt refinement:", error)

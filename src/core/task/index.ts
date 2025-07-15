@@ -1014,12 +1014,12 @@ export class Task {
 						console.log("[Task] Prompt refinement completed successfully")
 
 						// Ask user to confirm the refined prompt
-						const planCheckMessage = refinedResult.fileUri
+						const refinePromptCheckMessage = refinedResult.fileUri
 							? `${PROMPTS.CHECK_REFINE_PROMPT_ASK}\n\n📁 **파일 위치:** \`${refinedResult.fileUri.fsPath}\``
 							: PROMPTS.CHECK_REFINE_PROMPT_ASK
 
-						const planConfirmed = await this.askUserApproval("ask_check", planCheckMessage)
-						if (planConfirmed) {
+						const refinePromptConfirmed = await this.askUserApproval("ask_check", refinePromptCheckMessage)
+						if (refinePromptConfirmed) {
 							// Update task from refined prompt file
 							task = await readFile(refinedResult.fileUri.fsPath, "utf-8").catch((error: any) => {
 								console.warn("[Task] Failed to read refined prompt file:", error)

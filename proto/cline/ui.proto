@@ -44,7 +44,8 @@ enum ClineAsk {
   SUMMARIZE_TASK = 16;
   ASK_PROCEED = 17;
   ASK_RETRY = 18;
-  ASK_CHECK = 19;
+  ASK_FINAL_RETRY = 19;
+  ASK_CHECK = 20;
 }
 
 // Enum for ClineSay types

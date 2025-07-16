@@ -108,6 +108,7 @@ export type ClineAsk =
 	| "report_bug"
 	| "ask_proceed"
 	| "ask_retry"
+	| "ask_final_retry"
 	| "ask_check"
 
 export type ClineSay =

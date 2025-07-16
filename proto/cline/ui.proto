@@ -43,7 +43,8 @@ enum ClineAsk {
   REPORT_BUG = 15;
   ASK_PROCEED = 16;
   ASK_RETRY = 17;
-  ASK_CHECK = 18;
+  ASK_FINAL_RETRY = 18;
+  ASK_CHECK = 19;
 }
 
 // Enum for ClineSay types

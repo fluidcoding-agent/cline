@@ -59,6 +59,12 @@ export function useButtonState(messages: ClineMessage[], chatState: ChatState) {
 							setPrimaryButtonText("Retry")
 							setSecondaryButtonText("Skip")
 							break
+						case "ask_final_retry":
+							setSendingDisabled(true)
+							setEnableButtons(true)
+							setPrimaryButtonText("Retry")
+							setSecondaryButtonText("Finish Task")
+							break
 						case "ask_check":
 							setSendingDisabled(true)
 							setEnableButtons(true)

@@ -1,6 +1,6 @@
 import * as vscode from "vscode"
 import { Controller } from "../controller"
-import { extractTag, extractTagAsLines } from "./utils"
+import { extractTag, extractTagAsLines, PHASE_RETRY_LIMIT } from "./utils"
 
 export enum PhaseStatus {
 	Pending = "pending",
@@ -48,6 +48,8 @@ export interface PhaseState {
 	status: PhaseStatus
 	startTime?: number
 	endTime?: number
+	retryCount?: number
+	startCheckpointHash?: string
 }
 
 export interface Requirement {
@@ -160,7 +162,7 @@ function filterSubtasksByPattern(subtasks: Subtask[], pattern: RegExp): Subtask[
 	// Re-index the filtered items
 	return filtered.map((subtask, index) => ({
 		...subtask,
-		index: index + 1,
+		index: index + 1, // Re-index starting from 1
 	}))
 }
 
@@ -568,6 +570,7 @@ export class PhaseTracker {
 			},
 			status: PhaseStatus.Pending,
 			startTime: Date.now(),
+			retryCount: 0,
 		})
 	}
 
@@ -581,6 +584,7 @@ export class PhaseTracker {
 				status: PhaseStatus.Pending,
 				startTime: undefined,
 				endTime: undefined,
+				retryCount: 0,
 			})
 		})
 		await this.saveCheckpoint()
@@ -607,6 +611,7 @@ export class PhaseTracker {
 				status: PhaseStatus.Pending,
 				startTime: undefined,
 				endTime: undefined,
+				retryCount: 0,
 			})
 		})
 
@@ -644,6 +649,9 @@ export class PhaseTracker {
 		}
 	}
 
+	/**
+	 * Update the task ID for a specific phase
+	 */
 	public updateTaskIdPhase(phaseId: number, taskId: string): void {
 		const phaseState = this.phaseStates.find((p) => p.index === phaseId)
 		if (!phaseState) {
@@ -651,6 +659,98 @@ export class PhaseTracker {
 		}
 		phaseState.taskId = taskId
 		this.saveCheckpoint()
+	}
+
+	/**
+	 * Get the current phase's retry count
+	 */
+	public getCurrentPhaseRetryCount(): number {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		return ps?.retryCount || 0
+	}
+
+	/**
+	 * Check if the current phase can be retried (max 3 attempts total)
+	 */
+	public canRetryCurrentPhase(): boolean {
+		const retryCount = this.getCurrentPhaseRetryCount()
+		return retryCount < PHASE_RETRY_LIMIT
+	}
+
+	/**
+	 * Increment the retry count for the current phase and reset its status
+	 */
+	public async retryCurrentPhase(): Promise<void> {
+		if (!this.phaseStates[this.currentPhaseIndex]) {
+			throw new Error("Invalid phase index during retry")
+		}
+
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		// Increment retry count
+		ps.retryCount = (ps.retryCount || 0) + 1
+
+		// Reset phase status to pending
+		ps.status = PhaseStatus.Pending
+		ps.startTime = undefined
+		ps.endTime = undefined
+		ps.startCheckpointHash = undefined // Clear start checkpoint hash
+
+		await this.saveCheckpoint()
+	}
+
+	public getPhaseCompletionAction(): "all_complete" | "partial_complete" | "non_phase" {
+		if (this.isAllComplete()) {
+			return "all_complete"
+		} else if (this.currentPhaseIndex < this.phaseStates.length - 1) {
+			return "partial_complete"
+		} else {
+			return "non_phase"
+		}
+	}
+
+	public shouldShowRetryOption(): boolean {
+		return this.canRetryCurrentPhase()
+	}
+
+	public getRetryLimitMessage(): string {
+		const isAllComplete = this.isAllComplete()
+		const action = isAllComplete ? "종료합니다" : "다음 Phase로 강제 이동합니다"
+		return `⚠️ **재시도 한계 초과**\n\n최대 재시도 횟수(${PHASE_RETRY_LIMIT}회)를 초과했습니다. ${action}.`
+	}
+
+	/**
+	 * Force move to next phase when retry limit is exceeded
+	 */
+	public async forceNextPhase(): Promise<void> {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		if (ps) {
+			ps.status = PhaseStatus.Skipped // Failed TODO: (sa)
+			ps.endTime = Date.now()
+		}
+
+		if (this.hasNextPhase()) {
+			this.updatePhase()
+		}
+
+		await this.saveCheckpoint()
+	}
+
+	/**
+	 * Set the start checkpoint hash for the current phase
+	 */
+	public setCurrentPhaseStartCheckpoint(checkpointHash: string): void {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		if (ps) {
+			ps.startCheckpointHash = checkpointHash
+		}
+	}
+
+	/**
+	 * Get the start checkpoint hash for the current phase
+	 */
+	public getCurrentPhaseStartCheckpoint(): string | undefined {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		return ps?.startCheckpointHash
 	}
 
 	public async completePhase(phaseId: number): Promise<void> {

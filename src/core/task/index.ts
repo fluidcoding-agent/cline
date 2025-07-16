@@ -97,7 +97,7 @@ import { ClineErrorType } from "@/services/error/ClineError"
 import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile, PhaseStatus } from "../planning/phase-tracker"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
-import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff } from "../planning/utils"
+import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
 import { Controller } from "../controller"
 // refinePrompt
 import { getAllExtensionState } from "../storage/state"
@@ -1147,10 +1147,9 @@ export class Task {
 	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const MAX_RETRIES = 3
 		let attempts = 0
 
-		while (attempts < MAX_RETRIES) {
+		while (attempts < PLANNING_MAX_RETRIES) {
 			try {
 				if (attempts > 0) {
 					await this.say("text", "🔄 **계획을 다시 시도합니다...**")
@@ -1238,7 +1237,10 @@ export class Task {
 		}
 
 		// If we reach here, it means max retries exceeded
-		await this.say("text", `⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`)
+		await this.say(
+			"text",
+			`⚠️ **계획 단계가 ${PLANNING_MAX_RETRIES}회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`,
+		)
 
 		// Planning failed, proceed with normal task execution
 		this.taskState.isPhaseRoot = false
@@ -1253,7 +1255,17 @@ export class Task {
 			const phase = this.sidebarController.phaseTracker.currentPhase
 			const total = this.sidebarController.phaseTracker.totalPhases
 			const phaseIndex = this.sidebarController.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.sidebarController.phaseTracker.getProjectOverview())
+			const ps = this.sidebarController.phaseTracker.phaseStates[phaseIndex]
+			let prompt = buildPhasePrompt(phase, total, this.sidebarController.phaseTracker.getProjectOverview())
+			if (ps.retryCount && ps.retryCount > 0) {
+				ps.status = PhaseStatus.InProgress
+				ps.startTime = Date.now()
+				prompt = `${prompt}\n\n⚠️ **Phase Retry ${ps.retryCount}/${PHASE_RETRY_LIMIT}** - This phase is being retried. Please carefully review the previous attempt and make necessary improvements.`
+				await this.say(
+					"text",
+					`🔄 **Phase 재시도 중...**\n\n현재 Phase를 다시 시작합니다. (${ps.retryCount}/${PHASE_RETRY_LIMIT}번째 재시도)`,
+				)
+			}
 
 			this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
 
@@ -1273,10 +1285,114 @@ export class Task {
 			throw new Error("PhaseTracker not initialized")
 		}
 
+		// Save checkpoint at the start of phase if checkpoints are enabled
+		await this.savePhaseStartCheckpoint()
+
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
 		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
 		this.taskState.phaseFinished = phaseFinished
+	}
+
+	/**
+	 * Save checkpoint at the start of a phase
+	 */
+	private async savePhaseStartCheckpoint(): Promise<void> {
+		if (!this.enableCheckpoints || !this.checkpointTracker || !this.sidebarController.phaseTracker) {
+			this.checkpointTracker = await CheckpointTracker.create(
+				this.taskId,
+				this.context.globalStorageUri.fsPath,
+				this.enableCheckpoints,
+			)
+		}
+
+		try {
+			// Save current state as checkpoint
+			const checkpointHash = await this.checkpointTracker?.commit()
+
+			if (checkpointHash) {
+				// Store the checkpoint hash in phase tracker
+				this.sidebarController.phaseTracker?.setCurrentPhaseStartCheckpoint(checkpointHash)
+
+				console.log(
+					`[savePhaseStartCheckpoint] Saved checkpoint for phase ${this.sidebarController.phaseTracker?.currentPhaseIndex}: ${checkpointHash}`,
+				)
+			}
+		} catch (error) {
+			console.warn("Failed to save phase start checkpoint:", error)
+		}
+	}
+
+	/**
+	 * Retry the current phase from the beginning
+	 */
+	public async retryCurrentPhase(): Promise<void> {
+		if (!this.sidebarController.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Check if retry is allowed
+		if (!this.sidebarController.phaseTracker.canRetryCurrentPhase()) {
+			throw new Error("Maximum retry attempts reached for current phase")
+		}
+
+		// Rollback to phase start if possible
+		const startCheckpointHash = this.sidebarController.phaseTracker.getCurrentPhaseStartCheckpoint()
+		if (startCheckpointHash && this.enableCheckpoints && this.checkpointTracker) {
+			try {
+				await this.say(
+					"text",
+					`🔄 **Phase 재시도 - 워크스페이스 롤백 중...**\n\nPhase 시작 시점으로 워크스페이스를 되돌리고 있습니다.`,
+				)
+
+				// Rollback to the checkpoint
+				await this.checkpointTracker.resetHead(startCheckpointHash)
+
+				await this.say("text", `✅ **워크스페이스 롤백 완료**\n\n현재 Phase에서 수행된 모든 변경사항이 되돌려졌습니다.`)
+			} catch (error) {
+				console.warn("Failed to rollback phase changes:", error)
+				await this.say(
+					"text",
+					`⚠️ **롤백 실패**\n\n워크스페이스 롤백에 실패했습니다: ${error instanceof Error ? error.message : "Unknown error"}`,
+				)
+			}
+		}
+
+		// Increment retry count and reset phase status
+		await this.sidebarController.phaseTracker.retryCurrentPhase()
+	}
+
+	/**
+	 * Force move to next phase when retry limit is exceeded
+	 */
+	public async forceNextPhase(): Promise<void> {
+		if (!this.sidebarController.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Rollback to phase start checkpoint if available
+		const startCheckpointHash = this.sidebarController.phaseTracker.getCurrentPhaseStartCheckpoint()
+		if (startCheckpointHash && this.enableCheckpoints && this.checkpointTracker) {
+			try {
+				await this.say(
+					"text",
+					`🔄 **Phase 작업 되돌리는 중...**\n\nPhase 시작 시점으로 워크스페이스를 되돌리고 있습니다.`,
+				)
+
+				// Rollback to the checkpoint
+				await this.checkpointTracker.resetHead(startCheckpointHash)
+
+				await this.say("text", `✅ **워크스페이스 롤백 완료**\n\n현재 Phase에서 수행된 모든 변경사항이 되돌려졌습니다.`)
+			} catch (error) {
+				console.warn("Failed to rollback phase changes:", error)
+				await this.say(
+					"text",
+					`⚠️ **롤백 실패**\n\n워크스페이스 롤백에 실패했습니다: ${error instanceof Error ? error.message : "Unknown error"}`,
+				)
+			}
+		}
+
+		await this.sidebarController.phaseTracker.forceNextPhase()
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
@@ -2853,6 +2969,11 @@ export class Task {
 						text: formatResponse.noToolsUsed(),
 					})
 					this.taskState.consecutiveMistakeCount++
+				}
+
+				// Check if task was aborted before making recursive call
+				if (this.taskState.abort) {
+					throw new Error("Cline instance aborted")
 				}
 
 				const recDidEndLoop = await this.recursivelyMakeClineRequests(this.taskState.userMessageContent)

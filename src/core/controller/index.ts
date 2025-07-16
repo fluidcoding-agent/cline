@@ -1049,11 +1049,6 @@ Commit message:`
 		if (!current.status || current.status === "in-progress") {
 			await tracker.completePhase(currentIndex)
 		}
-
-		if (tracker.hasNextPhase()) {
-			tracker.updatePhase()
-			await tracker.saveCheckpoint()
-		}
 	}
 
 	public async onTaskCompleted(): Promise<void> {

@@ -145,6 +145,7 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				case "mistake_limit_reached":
 				case "ask_proceed":
 				case "ask_retry":
+				case "ask_final_retry":
 				case "ask_check":
 				case "auto_approval_max_req_reached":
 				case "command_output":
@@ -258,6 +259,7 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				case "browser_action_launch":
 				case "ask_proceed":
 				case "ask_retry":
+				case "ask_final_retry":
 				case "ask_check":
 				case "use_mcp_server":
 					if (trimmedInput || (images && images.length > 0) || (files && files.length > 0)) {

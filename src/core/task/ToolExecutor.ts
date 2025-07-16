@@ -57,8 +57,8 @@ import { AutoApprove } from "./tools/autoApprove"
 import { showNotificationForApprovalIfAutoApprovalEnabled } from "./utils"
 import { Mode } from "@shared/storage/types"
 import { Controller } from "../controller"
-import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
+import { PHASE_RETRY_LIMIT } from "../planning/utils"
 
 export class ToolExecutor {
 	private autoApprover: AutoApprove
@@ -2372,49 +2372,101 @@ export class ToolExecutor {
 							telemetryService.captureTaskCompleted(this.taskId)
 						}
 
-						// we already sent completion_result says, an empty string asks relinquishes control over button and field
-						let text: string | undefined
-						let images: string[] | undefined
-						let completionFiles: string[] | undefined
-						await this.sidebarController.onPhaseCompleted()
-						if (this.taskState.phaseFinished) {
-							if (this.sidebarController.phaseTracker?.isAllComplete()) {
-								const {
-									response,
-									text,
-									images,
-									files: completionFiles,
-								} = await this.ask("completion_result", "", false)
-
-								if (response === "yesButtonClicked") {
-									this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-									break
-								}
-								await this.say("user_feedback", text ?? "", images, completionFiles)
-								await this.saveCheckpoint()
-							} else {
-								const result = await this.sidebarController.task?.askUserApproval(
-									"ask_proceed",
-									PROMPTS.MOVE_NEXT_PHASE_ASK,
-								)
-								if (!result) {
-									//TODO: (sa) handle user rejecting the move to next phase
-								}
-								await this.saveCheckpoint()
-							}
-						} else {
+						const handleCompletionResult = async (block: ToolUse): Promise<void> => {
 							const {
 								response,
 								text,
 								images,
 								files: completionFiles,
 							} = await this.ask("completion_result", "", false)
+
 							if (response === "yesButtonClicked") {
-								this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-								break
+								this.pushToolResult("", block)
+								return
 							}
+
 							await this.say("user_feedback", text ?? "", images, completionFiles)
 							await this.saveCheckpoint()
+						}
+
+						const handleAllPhasesComplete = async (phaseTracker: any, block: ToolUse): Promise<void> => {
+							const shouldRetry = await this.sidebarController.task?.askUserApproval(
+								"ask_final_retry",
+								PROMPTS.FINAL_RETRY_PHASE_ASK,
+							)
+
+							if (shouldRetry && phaseTracker.canRetryCurrentPhase()) {
+								await this.say("text", `🔄 **Phase 재시도**\n\n현재 Phase를 다시 시작합니다.`)
+								await this.sidebarController.task?.retryCurrentPhase()
+								await this.saveCheckpoint()
+								return
+							} else if (shouldRetry && !phaseTracker.canRetryCurrentPhase()) {
+								await this.say("text", phaseTracker.getRetryLimitMessage())
+							} else {
+								await this.say("text", `✅ **모든 Phase 완료**\n\n모든 Phase가 완료되었습니다.`)
+							}
+							await handleCompletionResult(block)
+						}
+
+						const handlePartialPhasesComplete = async (phaseTracker: any, block: ToolUse): Promise<void> => {
+							const approveProceed = await this.sidebarController.task?.askUserApproval(
+								"ask_proceed",
+								PROMPTS.MOVE_NEXT_PHASE_ASK,
+							)
+
+							if (approveProceed) {
+								// Move to next phase
+								if (phaseTracker?.hasNextPhase()) {
+									phaseTracker.updatePhase()
+								}
+								await phaseTracker?.saveCheckpoint()
+								await this.saveCheckpoint()
+								return
+							}
+
+							// User rejected move to next phase
+							const shouldRetry = await this.sidebarController.task?.askUserApproval(
+								"ask_retry",
+								PROMPTS.RETRY_PHASE_ASK,
+							)
+
+							if (shouldRetry && phaseTracker?.canRetryCurrentPhase()) {
+								// Retry the current phase
+								await this.say("text", `🔄 **Phase 재시도**\n\n현재 Phase를 다시 시작합니다.`)
+								await this.sidebarController.task?.retryCurrentPhase()
+							} else if (shouldRetry && !phaseTracker?.canRetryCurrentPhase()) {
+								// Maximum retries reached, force next phase
+								await this.say(
+									"text",
+									`⚠️ **재시도 한계 초과**\n\n최대 재시도 횟수(${PHASE_RETRY_LIMIT}회)를 초과했습니다. 다음 Phase로 강제 이동합니다.`,
+								)
+								await this.sidebarController.task?.forceNextPhase()
+							} else {
+								// No retry, force next phase
+								await this.sidebarController.task?.forceNextPhase()
+							}
+							await this.saveCheckpoint()
+						}
+
+						let text: string | undefined
+						let images: string[] | undefined
+						let completionFiles: string[] | undefined
+						await this.sidebarController.onPhaseCompleted()
+						const phaseTracker = this.sidebarController.phaseTracker
+						if (!this.taskState.phaseFinished) {
+							await handleCompletionResult(block)
+						}
+						const completionAction = phaseTracker?.getPhaseCompletionAction()
+						switch (completionAction) {
+							case "all_complete":
+								await handleAllPhasesComplete(phaseTracker, block)
+								break
+							case "partial_complete":
+								await handlePartialPhasesComplete(phaseTracker, block)
+								break
+							default:
+								await handleCompletionResult(block)
+								break
 						}
 
 						const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []

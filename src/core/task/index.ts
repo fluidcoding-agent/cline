@@ -106,6 +106,7 @@ export class Task {
 
 	// Task configuration
 	private enableCheckpoints: boolean
+	private originalApiConfiguration: ApiConfiguration
 
 	// Core dependencies
 	private controller: Controller
@@ -218,6 +219,7 @@ export class Task {
 		this.cacheService = cacheService
 
 		this.taskState.isPhaseRoot = isPhaseRoot
+		this.originalApiConfiguration = apiConfiguration
 
 		// Set up MCP notification callback for real-time notifications
 		this.mcpHub.setNotificationCallback(async (serverName: string, level: string, message: string) => {
@@ -393,17 +395,10 @@ export class Task {
 
 	// Create a temporary API handler with a specific model
 	private createTemporaryApiHandler(modelName: string): ApiHandler {
-		// Copy the current API configuration directly from this.api
-		// We need to maintain the original API's configuration and just change the model
-		const currentApi = this.api
-
-		// Create a new configuration with the specified model
 		// Get apiProvider and other properties directly from the original API
 		const tempConfig: ApiConfiguration = {
-			...(currentApi as any).options, // Directly access the options property if it exists
-			apiProvider: (currentApi as any).options?.apiProvider,
-			apiKey: (currentApi as any).options?.apiKey,
-			apiModelId: modelName, // Override with the requested model
+			...this.originalApiConfiguration,
+			actModeOpenRouterModelId: modelName, // Override with the requested model
 			taskId: this.taskId, // Ensure task ID is preserved
 		}
 
@@ -1676,7 +1671,7 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "anthropic/claude-sonnet-4")
 		let assistantText = ""
 		const start = performance.now()
 

@@ -10,18 +10,44 @@ export enum PhaseStatus {
 	Failed = "failed",
 }
 
+export interface RequirementItem {
+	id: string
+	description: string
+}
+
+export interface RequirementSpecReinforcement {
+	requirements: RequirementItem[]
+	specs: RequirementItem[]
+}
+
+export interface ProjectOverview {
+	title?: string
+	projectVision?: string[]
+	common?: string[]
+	primaryObjectives?: Subtask[]
+}
+
 export interface Phase {
 	phaseIdx: number
 	title: string
 	exeOrderIdx: number
+	dependencies?: string[]
+	explain?: string[]
+	requirements?: {
+		list: RequirementItem[]
+		note?: string
+	}
+	objectives?: string[]
+	deliverables?: string[]
+	completionCriteria?: Subtask[]
+	validationChecklist?: Subtask[]
+	// Legacy fields for backward compatibility
 	prerequisites?: string[]
 	relatedRequirements?: string[]
 	requirementCoverage?: string[]
 	coreObjectives?: string[]
 	functionalRequirements?: string[]
-	deliverables?: string[]
 	nonFunctionalRequirements?: string[]
-	completionCriteria?: Subtask[]
 	handoffChecklist?: Subtask[]
 	integrationObjectives?: string[]
 	integrationSteps?: string[]
@@ -41,9 +67,8 @@ export interface Subtask {
 export interface PhaseState {
 	index: number
 	taskId?: string
-	projOverview?: string
+	projOverview?: ProjectOverview
 	executionPlan?: string
-	requirements?: RequirementInventory
 	phase?: Phase
 	status: PhaseStatus
 	startTime?: number
@@ -67,10 +92,164 @@ export interface PhaseResult {
 }
 
 export interface ParsedPlan {
-	projOverview: string
+	projOverview: ProjectOverview
 	executionPlan: string
-	requirements: RequirementInventory
 	phases: Phase[]
+}
+
+/**
+ * Separates multi-line text into lines and returns them as a cleaned array.
+ * - Removes empty lines.
+ * - Trims whitespace from the beginning and end of each line.
+ * - Optionally removes indentation or list markers (-, *, 1., etc.).
+ */
+function splitAndCleanLines(text: string, removeListMarkers: boolean = false): string[] {
+	if (!text) {
+		return []
+	}
+
+	// Split into lines
+	const lines = text.split(/\r?\n/)
+	const result: string[] = []
+
+	for (let line of lines) {
+		line = line.trim()
+
+		if (!line) {
+			continue
+		}
+
+		// Remove list markers (optional)
+		if (removeListMarkers) {
+			// Numbered list (1., 2., etc.)
+			line = line.replace(/^\d+\.\s*/, "")
+			// Bullet list (-, *, • etc.)
+			line = line.replace(/^[-*•]\s*/, "")
+		}
+
+		result.push(line)
+	}
+
+	return result
+}
+
+/**
+ * Extracts the content of a specific tag and returns it as an array of lines.
+ */
+function extractTagAsLinesNew(tag: string, source: string, removeListMarkers: boolean = false): string[] {
+	const content = extractTag(tag, source)
+	return splitAndCleanLines(content, removeListMarkers)
+}
+
+/**
+ * Parses requirement lines in the format "- REQ-XXX: description" or "- SPEC-XXX: description" into RequirementItem array
+ */
+function parseRequirementsList(tag: string, source: string): RequirementItem[] {
+	const lines = extractTagAsLinesNew(tag, source, true)
+	const requirements: RequirementItem[] = []
+	
+	for (const line of lines) {
+		// Match pattern: REQ-XXX: description or SPEC-XXX: description
+		const reqMatch = line.match(/^((?:REQ|SPEC)-\d{3})\s*:\s*(.+)$/i)
+		if (reqMatch) {
+			const [, id, description] = reqMatch
+			requirements.push({
+				id: id.trim(),
+				description: description.trim()
+			})
+		}
+	}
+	
+	return requirements
+}
+
+/**
+ * Parses requirement_spec_reinforcement_list section
+ */
+export function parseRequirementSpecReinforcement(raw: string): RequirementSpecReinforcement | null {
+	const reinforcementRe = /<requirement_spec_reinforcement_list>([\s\S]*?)<\/requirement_spec_reinforcement_list>/i
+	const match = raw.match(reinforcementRe)
+	
+	if (!match) {
+		return null
+	}
+	
+	const content = match[1].trim()
+	const requirements = parseRequirementsList("requirements", content)
+	const specs = parseRequirementsList("specs", content)
+	
+	return {
+		requirements,
+		specs
+	}
+}
+
+/**
+ * Reinforces phase requirements with detailed descriptions from reinforcement data
+ */
+export function reinforcePhaseRequirements(phases: Phase[], reinforcement: RequirementSpecReinforcement): Phase[] {
+	if (!reinforcement || reinforcement.requirements.length === 0) {
+		return phases
+	}
+	
+	// Create a lookup map for faster searching
+	const reinforcementMap = new Map<string, string>()
+	for (const req of reinforcement.requirements) {
+		reinforcementMap.set(req.id, req.description)
+	}
+	
+	// Process each phase
+	return phases.map(phase => {
+		if (!phase.requirements?.list) {
+			return phase
+		}
+		
+		// Replace requirements with reinforced descriptions
+		const reinforcedRequirements = phase.requirements.list.map(req => {
+			const reinforcedDescription = reinforcementMap.get(req.id)
+			return {
+				...req,
+				description: reinforcedDescription || req.description
+			}
+		})
+		
+		return {
+			...phase,
+			requirements: {
+				...phase.requirements,
+				list: reinforcedRequirements
+			}
+		}
+	})
+}
+
+/**
+ * Parses the project overview section from raw text and extracts structured data
+ */
+export function parseProjectOverviewSection(source: string): ProjectOverview {
+	// Extract the project_overview block
+	const projViewRe = /<project_overview>([\s\S]*?)<\/project_overview>/i
+	const pvMatch = source.match(projViewRe)
+	if (!pvMatch) {
+		console.error("[parseProjectOverviewSection] project_overview section not found")
+		throw new Error("project_overview section not found.")
+	}
+	const projOverviewContent = pvMatch[1].trim()
+	
+	// Extract each subsection
+	const title = extractTag("title", projOverviewContent)
+	const projectVision = extractTagAsLinesNew("project_vision", projOverviewContent, true)
+	const common = extractTagAsLinesNew("common", projOverviewContent, true)
+	const primaryObjectives = parseChecklist("primary_objectives", projOverviewContent)
+	
+	const result = {
+		title: title || undefined,
+		projectVision: projectVision.length > 0 ? projectVision : undefined,
+		common: common.length > 0 ? common : undefined,
+		primaryObjectives: primaryObjectives.length > 0 ? primaryObjectives : undefined
+	}
+	
+	return result
 }
 
 export function parseProjectOverview(source: string): string {
@@ -78,6 +257,7 @@ export function parseProjectOverview(source: string): string {
 	const projViewRe = /<project_overview>([\s\S]*?)<\/project_overview>/i
 	const pvMatch = source.match(projViewRe)
 	if (!pvMatch) {
+		console.error("[parseProjectOverview] project_overview section not found")
 		throw new Error("project_overview section not found.")
 	}
 	const projOverview = pvMatch[1].trim()
@@ -89,7 +269,7 @@ export function parseExecutionPlan(raw: string): string {
 	const planRegex = /<execution_plan>([\s\S]*?)<\/execution_plan>/i
 	const planMatch = raw.match(planRegex)
 	if (!planMatch) {
-		// throw new Error("No execution plan section found in the input text")
+		console.warn("[parseExecutionPlan] No execution plan section found")
 		return ""
 	}
 	const executionPlan = planMatch[1].trim()
@@ -100,11 +280,24 @@ export function parseRequirement(raw: string): RequirementInventory {
 	// Extract the requirement inventory section from the raw text
 	const invRe = /<requirement_inventory>([\s\S]*?)<\/requirement_inventory>/i
 	const invMatch = raw.match(invRe)
+	
 	if (!invMatch) {
-		throw new Error("No requirement inventory section found in the input text")
+		// Try to extract from requirement_spec_reinforcement_list as fallback
+		const reinforcement = parseRequirementSpecReinforcement(raw)
+		if (reinforcement && reinforcement.requirements.length > 0) {
+			const inventory: RequirementInventory = {}
+			reinforcement.requirements.forEach(req => {
+				inventory[req.id] = req.description
+			})
+			return inventory
+		}
+		
+		// If no requirements found anywhere, return empty inventory instead of throwing error
+		console.warn("[parseRequirement] No requirements found, returning empty inventory")
+		return {}
 	}
+	
 	const inventoryRaw = invMatch[1].trim()
-
 	const lines = inventoryRaw.split(/\r?\n/)
 	const inventory: RequirementInventory = {}
 
@@ -119,6 +312,7 @@ export function parseRequirement(raw: string): RequirementInventory {
 			inventory[id] = description.trim()
 		}
 	}
+	
 	return inventory
 }
 
@@ -180,6 +374,100 @@ function extractRequirement(source: string): string[] {
 	return relatedRequirements
 }
 
+// Improved parsePhase function with new structure
+export function parsePhaseNew(raw: string): Phase[] {
+	const phaseBlocks = raw.match(/<phase>([\s\S]*?)<\/phase>/gi) ?? []
+	const phases: Phase[] = []
+
+	console.log(`[parsePhaseNew] Found ${phaseBlocks.length} phase blocks`)
+	
+	if (phaseBlocks.length === 0) {
+		console.error("[parsePhaseNew] No <phase> blocks found in input")
+		return []
+	}
+
+	for (let blockIndex = 0; blockIndex < phaseBlocks.length; blockIndex++) {
+		const block = phaseBlocks[blockIndex]
+		
+		try {
+			// Extract basic information
+			const numberStr = extractTag("number", block)
+			const title = extractTag("title", block)
+			const exeOrderStr = extractTag("execution_order", block)
+			const dependencies = extractTagAsLinesNew("dependencies", block)
+			const explain = extractTagAsLinesNew("explain", block)
+
+			// 공통 필드 초기화
+			const phaseData: Partial<Phase> = {
+				title,
+				dependencies,
+				explain,
+				requirements: undefined, // Initialize as undefined
+				objectives: [],
+				deliverables: [],
+				completionCriteria: [],
+				validationChecklist: [],
+			}
+
+			// FINAL 단계와 일반 단계에 따라 데이터 추출
+			const isFinalPhase = numberStr === "FINAL"
+			
+			if (isFinalPhase) {
+				phaseData.objectives = extractTagAsLinesNew("objective", block)
+				phaseData.deliverables = extractTagAsLinesNew("deliverables", block)
+				phaseData.completionCriteria = parseChecklist("validation_checklist", block)
+
+			} else {
+				// For non-FINAL phases, extract requirements
+				const requirementsBlock = extractTag("requirements", block)
+				if (requirementsBlock) {
+					const noteContent = extractTag("note", requirementsBlock)
+					
+					phaseData.requirements = {
+						list: parseRequirementsList("list", requirementsBlock),
+						note: noteContent || undefined
+					}
+				}
+				
+				phaseData.objectives = extractTagAsLinesNew("objectives", block)
+				phaseData.deliverables = extractTagAsLinesNew("deliverables", block)
+				phaseData.completionCriteria = parseChecklist("completion_criteria", block)
+			}
+
+			// Index calculation - simplify ternary operators
+			const phaseIdx = numberStr
+				? numberStr.toUpperCase() === "FINAL"
+					? phaseBlocks.length
+					: parseInt(numberStr, 10)
+				: phases.length + 1 // If numberStr doesn't exist, use the next index
+
+			const exeOrderIdx = exeOrderStr ? (exeOrderStr === "LAST" ? phaseBlocks.length : parseInt(exeOrderStr)) : phaseIdx // If exeOrderStr doesn't exist, set it to the same value as phaseIdx
+
+			// Create and add completed Phase object
+			const completedPhase = {
+				...phaseData,
+				phaseIdx,
+				exeOrderIdx,
+			} as Phase
+			
+			phases.push(completedPhase)
+			
+		} catch (blockError) {
+			console.error(`[parsePhaseNew] Error processing block ${blockIndex + 1}:`, blockError)
+			// Continue processing other blocks instead of failing completely
+			console.log(`[parsePhaseNew] Skipping block ${blockIndex + 1} and continuing with others...`)
+		}
+	}
+
+	// Sort by execution order
+	const sortedPhases = phases.sort((a, b) => a.exeOrderIdx - b.exeOrderIdx)
+	
+	console.log(`[parsePhaseNew] Successfully parsed ${sortedPhases.length} phases`)
+	
+	return sortedPhases
+}
+
+// Markdown parsing function that works with the new interface structure
 export function parsePhaseByMD(raw: string): Phase[] {
 	// First, extract the Execution Phases section (with or without emoji)
 	const executionPhasesMatch = raw.match(/##\s*(?:📊\s*)?Execution\s*Phases([\s\S]*?)(?=##\s*(?:📝\s*)?Plan\s*Summary|$)/i)
@@ -248,17 +536,23 @@ export function parsePhaseByMD(raw: string): Phase[] {
 			numberStr.toLowerCase().includes("complete") ||
 			title.toLowerCase().includes("integration")
 
-		// Initialize common fields
+		// Initialize common fields with new interface structure
 		const phaseData: Partial<Phase> = {
 			title,
+			dependencies: [],
+			explain: [],
+			requirements: undefined,
+			objectives: [],
+			deliverables: [],
+			completionCriteria: [],
+			validationChecklist: [],
+			// Legacy fields for backward compatibility
 			prerequisites: [],
 			relatedRequirements: [],
 			requirementCoverage: [],
 			coreObjectives: [],
 			functionalRequirements: [],
-			deliverables: [],
 			nonFunctionalRequirements: [],
-			completionCriteria: [],
 			handoffChecklist: [],
 			integrationObjectives: [],
 			integrationSteps: [],
@@ -271,17 +565,24 @@ export function parsePhaseByMD(raw: string): Phase[] {
 		const executionOrderMatch = section.match(/\*\*Execution Order\*\*:\s*(\d+)/i)
 		const exeOrderStr = executionOrderMatch ? executionOrderMatch[1] : undefined
 
-		// Extract prerequisites
-		phaseData.prerequisites = extractMDSection("Prerequisites")
+		// Extract prerequisites/dependencies
+		phaseData.dependencies = extractMDSection("Prerequisites")
+		phaseData.prerequisites = phaseData.dependencies // Legacy compatibility
 
 		// Extract data based on whether it's a FINAL phase or a regular phase
 		if (isFinalPhase) {
+			// FINAL phase specific fields
 			phaseData.integrationObjectives = extractMDSection("Integration Objectives")
 			phaseData.integrationSteps = extractMDSection("Integration Steps")
 			phaseData.originalRequirementsValidations = extractChecklistSection("Original Requirements Validations")
 			phaseData.systemWideTesting = extractMDSection("System-Wide Testing")
 			phaseData.finalDeliverables = extractChecklistSection("Final Deliverables")
+			
+			// Map to new structure
+			phaseData.objectives = phaseData.integrationObjectives
+			phaseData.completionCriteria = phaseData.finalDeliverables
 		} else {
+			// Regular phase fields
 			phaseData.relatedRequirements = extractMDSection("Related Requirements")
 			phaseData.requirementCoverage = extractMDSection("Requirement Coverage")
 			phaseData.coreObjectives = extractMDSection("Core Objectives")
@@ -290,6 +591,9 @@ export function parsePhaseByMD(raw: string): Phase[] {
 			phaseData.nonFunctionalRequirements = extractMDSection("Non-Functional Requirements")
 			phaseData.completionCriteria = extractChecklistSection("Completion Criteria")
 			phaseData.handoffChecklist = extractChecklistSection("Handoff Checklist")
+			
+			// Map to new structure
+			phaseData.objectives = phaseData.coreObjectives
 		}
 
 		// Index calculation
@@ -314,6 +618,7 @@ export function parsePhaseByMD(raw: string): Phase[] {
 	return phases.sort((a, b) => a.exeOrderIdx - b.exeOrderIdx)
 }
 
+// Legacy parsePhase function for backward compatibility with <subtask> format
 export function parsePhase(raw: string): Phase[] {
 	const phaseBlocks = raw.match(/<subtask>([\s\S]*?)<\/subtask>/gi) ?? []
 	const phases: Phase[] = []
@@ -326,17 +631,22 @@ export function parsePhase(raw: string): Phase[] {
 		const exeOrderStr = extractTag("execution_order", block)
 		const prerequisites = extractTagAsLines("prerequisites", block)
 
-		// Initialize common fields
+		// Initialize common fields with new interface structure
 		const phaseData: Partial<Phase> = {
 			title,
+			// Map legacy fields to new structure
+			dependencies: prerequisites,
+			objectives: [],
+			deliverables: [],
+			completionCriteria: [],
+			validationChecklist: [],
+			// Keep legacy fields for backward compatibility
 			prerequisites,
 			relatedRequirements: [],
 			requirementCoverage: [],
 			coreObjectives: [],
 			functionalRequirements: [],
-			deliverables: [],
 			nonFunctionalRequirements: [],
-			completionCriteria: [],
 			handoffChecklist: [],
 			integrationObjectives: [],
 			integrationSteps: [],
@@ -354,6 +664,9 @@ export function parsePhase(raw: string): Phase[] {
 			)
 			phaseData.systemWideTesting = extractTagAsLines("system_wide_testing", block, true)
 			phaseData.finalDeliverables = parseChecklist("final_deliverables", block)
+			// Map to new structure
+			phaseData.objectives = phaseData.integrationObjectives
+			phaseData.completionCriteria = phaseData.finalDeliverables
 		} else {
 			phaseData.relatedRequirements = extractRequirement(block)
 			phaseData.requirementCoverage = extractTagAsLines("requirement_coverage", block)
@@ -363,6 +676,8 @@ export function parsePhase(raw: string): Phase[] {
 			phaseData.nonFunctionalRequirements = extractTagAsLines("non_functional_requirements", block)
 			phaseData.completionCriteria = parseChecklist("completion_criteria", block)
 			phaseData.handoffChecklist = parseChecklist("handoff_checklist", block)
+			// Map to new structure
+			phaseData.objectives = phaseData.coreObjectives
 		}
 
 		// Index calculation - simplify ternary operators
@@ -387,27 +702,65 @@ export function parsePhase(raw: string): Phase[] {
 }
 
 export function parsePlanFromOutput(raw: string, isMD: boolean = false): ParsedPlan {
-	const projOverview = parseProjectOverview(raw)
-	const executionPlan = parseExecutionPlan(raw)
-	const requirements = parseRequirement(raw)
+	console.log("[parsePlanFromOutput] Starting plan parsing...")
 
-	let phases: Phase[]
-	if (isMD) {
-		phases = parsePhaseByMD(raw)
-	} else {
-		phases = parsePhase(raw)
+	// Step 1: Parse project overview section
+	let projOverviewSection: ProjectOverview
+	try {
+		projOverviewSection = parseProjectOverviewSection(raw)
+	} catch (overviewError) {
+		console.error("[parsePlanFromOutput] Project overview parsing failed:", overviewError)
+		throw new Error(`Project overview parsing failed: ${overviewError instanceof Error ? overviewError.message : String(overviewError)}`)
 	}
 
-	console.log("[parsePlanFromOutput] Parsed phases count:", phases.length)
+	// Step 2: Parse execution plan
+	let executionPlan: string
+	try {
+		executionPlan = parseExecutionPlan(raw)
+	} catch (planError) {
+		console.error("[parsePlanFromOutput] Execution plan parsing failed:", planError)
+		throw new Error(`Execution plan parsing failed: ${planError instanceof Error ? planError.message : String(planError)}`)
+	}
+
+	// Step 3: Parse phases
+	let phases: Phase[]
+	try {
+		if (isMD) {
+			phases = parsePhaseByMD(raw)
+		} else {
+			phases = parsePhaseNew(raw)
+		}
+	} catch (phaseError) {
+		console.error("[parsePlanFromOutput] Phases parsing failed:", phaseError)
+		console.log("[parsePlanFromOutput] Looking for phase blocks in raw input...")
+		const phaseBlocks = raw.match(/<phase>([\s\S]*?)<\/phase>/gi)
+		const subtaskBlocks = raw.match(/<subtask>([\s\S]*?)<\/subtask>/gi)
+		console.log(`[parsePlanFromOutput] Found ${phaseBlocks?.length || 0} <phase> blocks`)
+		console.log(`[parsePlanFromOutput] Found ${subtaskBlocks?.length || 0} <subtask> blocks`)
+		if (isMD) {
+			const mdPhaseMatches = raw.match(/###\s*Phase\s+/gi)
+			console.log(`[parsePlanFromOutput] Found ${mdPhaseMatches?.length || 0} markdown phase headers`)
+		}
+		throw new Error(`Phases parsing failed: ${phaseError instanceof Error ? phaseError.message : String(phaseError)}`)
+	}
+
+	// Step 4: Parse and apply requirement reinforcement if available
+	try {
+		const reinforcement = parseRequirementSpecReinforcement(raw)
+		if (reinforcement) {
+			phases = reinforcePhaseRequirements(phases, reinforcement)
+		}
+	} catch (reinforcementError) {
+		console.warn("[parsePlanFromOutput] Requirement reinforcement failed, continuing without it:", reinforcementError)
+	}
 
 	if (phases.length === 0) {
 		console.error("[parsePlanFromOutput] No phases found in the Phase Plan content")
-		console.log("[parsePlanFromOutput] Raw plan for debugging:", raw)
 		throw new Error("No phases found in the Phase Plan content")
 	}
 
-	console.log("[parsePlanFromOutput] Successfully parsed plan with", phases.length, "phases")
-	return { projOverview, executionPlan, requirements, phases }
+	console.log(`[parsePlanFromOutput] Successfully parsed plan with ${phases.length} phases`)
+	return { projOverview: projOverviewSection, executionPlan, phases }
 }
 
 // 새로운 함수: plan.txt 파일의 subtask 구조를 파싱
@@ -502,8 +855,7 @@ export async function parsePlanFromFixedFile(
 		console.log("[parsePlanFromFixedFile] Successfully loaded plan.txt from dev path")
 		console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
 
-		// 새로운 subtask 형식으로 파싱
-		// return parsePlanFromSubtaskFormat(planContent)
+		// Use the improved parsing
 		return parsePlanFromOutput(planContent)
 	} catch (devError) {
 		console.warn("[parsePlanFromFixedFile] Dev path failed:", devError)
@@ -535,9 +887,11 @@ export async function parsePlanFromFixedFile(
 
 			// 두 경로 모두 실패한 경우 기본 플랜 반환
 			return {
-				projOverview: "고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요.",
+				projOverview: {
+					title: "Error Loading Plan",
+					projectVision: ["고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요."]
+				},
 				executionPlan: "고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요.",
-				requirements: {},
 				phases: [],
 			}
 		}
@@ -548,21 +902,30 @@ export class PhaseTracker {
 	public phaseStates: PhaseState[] = []
 	public currentPhaseIndex = 0
 	public isRestored: boolean = false
+	public parsedProjOverview: ProjectOverview
 
 	constructor(
 		public projOverview: string,
 		public executionPlan: string,
-		public requirements: RequirementInventory,
-
 		private controller: Controller,
 	) {
+		// Parse the string project overview into structured data
+		try {
+			this.parsedProjOverview = parseProjectOverviewSection(this.projOverview)
+		} catch (error) {
+			// Fallback to a simple structure if parsing fails
+			this.parsedProjOverview = {
+				title: "Project Overview",
+				projectVision: [this.projOverview],
+			}
+		}
+
 		// Step 1: Set up the first Phase (Plan) in Plan Mode
 		this.phaseStates.push({
 			index: 0,
 			taskId: "",
-			projOverview: projOverview,
-			executionPlan: executionPlan,
-			requirements: requirements,
+			projOverview: this.parsedProjOverview,
+			executionPlan: this.executionPlan,
 			phase: {
 				phaseIdx: 0,
 				title: "Plan Phase",
@@ -766,6 +1129,9 @@ export class PhaseTracker {
 
 		// Mark all checklist items as completed
 		markChecklistDone(phaseState.phase?.completionCriteria)
+		markChecklistDone(phaseState.phase?.validationChecklist)
+		
+		// Legacy support - mark old checklist fields as completed
 		markChecklistDone(phaseState.phase?.handoffChecklist)
 
 		// Handle additional checklists for the FINAL phase
@@ -845,7 +1211,11 @@ export class PhaseTracker {
 		return this.phaseStates.every((p) => p.status === PhaseStatus.Completed || p.status === PhaseStatus.Skipped)
 	}
 
-	public getProjectOverview(): string {
+	public getProjectOverview(): ProjectOverview {
+		return this.parsedProjOverview
+	}
+
+	public getProjectOverviewAsString(): string {
 		return this.projOverview
 	}
 
@@ -892,9 +1262,12 @@ export class PhaseTracker {
 			const tracker = new PhaseTracker(
 				checkpoint.projOverview,
 				checkpoint.executionPlan,
-				checkpoint.requirement,
 				this.controller,
 			)
+			// Restore parsed project overview if available, otherwise use the parsed version from constructor
+			if (checkpoint.parsedProjOverview) {
+				tracker.parsedProjOverview = checkpoint.parsedProjOverview
+			}
 			tracker.phaseStates = checkpoint.phaseStates
 			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
 			tracker.isRestored = true // Mark as restored
@@ -920,9 +1293,9 @@ export class PhaseTracker {
 
 			// 3) Prepare checkpoint data
 			const checkpointData: Record<string, any> = {
-				projOverview: this.projOverview, // string
+				projOverview: this.projOverview, // string (original)
+				parsedProjOverview: this.parsedProjOverview, // ProjectOverview (parsed)
 				executionPlan: this.executionPlan, // string
-				requirements: this.requirements, // RequirementInventory
 				phaseStates: this.phaseStates, // PhaseState[]
 				currentPhaseIndex: this.currentPhaseIndex, // number
 			}

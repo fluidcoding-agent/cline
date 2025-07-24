@@ -1,6 +1,6 @@
 import * as vscode from "vscode"
 import { createTwoFilesPatch } from "diff"
-import { ParsedPlan } from "./phase-tracker"
+import { ParsedPlan, ProjectOverview, Subtask } from "./phase-tracker"
 import * as fs from "fs"
 
 export const PHASE_RETRY_LIMIT = 2
@@ -63,6 +63,45 @@ export function extractTagAsLines(tag: string, source: string, removeListMarkers
 }
 
 /**
+ * Converts ProjectOverview to markdown string
+ */
+function projectOverviewToMarkdown(projOverview: ProjectOverview): string {
+	const lines: string[] = []
+	
+	if (projOverview.title) {
+		lines.push(`**제목**: ${projOverview.title}`)
+		lines.push("")
+	}
+	
+	if (projOverview.projectVision && projOverview.projectVision.length > 0) {
+		lines.push("**프로젝트 비전**:")
+		projOverview.projectVision.forEach(vision => {
+			lines.push(`- ${vision}`)
+		})
+		lines.push("")
+	}
+	
+	if (projOverview.common && projOverview.common.length > 0) {
+		lines.push("**공통 요구사항**:")
+		projOverview.common.forEach(common => {
+			lines.push(`- ${common}`)
+		})
+		lines.push("")
+	}
+	
+	if (projOverview.primaryObjectives && projOverview.primaryObjectives.length > 0) {
+		lines.push("**주요 목표**:")
+		projOverview.primaryObjectives.forEach(objective => {
+			const status = objective.completed ? "☑" : "☐"
+			lines.push(`${status} ${objective.description}`)
+		})
+		lines.push("")
+	}
+	
+	return lines.join("\n").trim()
+}
+
+/**
  * Saves the parsed plan as a markdown file for documentation purposes
  */
 export async function saveParsedPlanAsMarkdown(
@@ -72,16 +111,16 @@ export async function saveParsedPlanAsMarkdown(
 ): Promise<{ fileUri: vscode.Uri | undefined; snapshotUri: vscode.Uri | undefined }> {
 	try {
 		const mdContent = generateMarkdownContent(parsedPlan)
-
 		const filename = `project-execution-plan-${taskId}.md`
 		const fileUri = vscode.Uri.joinPath(saveUri, filename)
 
 		const encoder = new TextEncoder()
 		await vscode.workspace.fs.writeFile(fileUri, encoder.encode(mdContent))
-		console.log(`[saveParsedPlanAsMarkdown] Plan saved to workspace root: ${fileUri.toString()}`)
+		console.log(`[saveParsedPlanAsMarkdown] Plan saved to: ${fileUri.fsPath}`)
 
 		const snapshotUri = await createSnapshot(fileUri, saveUri, taskId)
-		return { fileUri, snapshotUri } // Return the URI of the saved markdown file
+		return { fileUri, snapshotUri }
+		
 	} catch (error) {
 		console.error("[saveParsedPlanAsMarkdown] Failed to save plan:", error)
 		return { fileUri: undefined, snapshotUri: undefined }
@@ -171,7 +210,7 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 	lines.push("## Project Overview")
 	lines.push("")
 	lines.push("<project_overview>")
-	lines.push(plan.projOverview)
+	lines.push(projectOverviewToMarkdown(plan.projOverview))
 	lines.push("</project_overview>")
 	lines.push("")
 
@@ -182,21 +221,6 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 		lines.push("<execution_plan>")
 		lines.push(plan.executionPlan)
 		lines.push("</execution_plan>")
-		lines.push("")
-	}
-
-	// Requirements Inventory
-	if (Object.keys(plan.requirements).length > 0) {
-		lines.push("<requirement_inventory>")
-		lines.push("## 📋 Requirements Inventory")
-		lines.push("")
-		const requirementCount = Object.keys(plan.requirements).length
-		lines.push(`> **Total Requirements**: ${requirementCount}`)
-		lines.push("")
-		Object.entries(plan.requirements).forEach(([id, description]) => {
-			lines.push(`- **${id}**: ${description}`)
-		})
-		lines.push("</requirement_inventory>")
 		lines.push("")
 	}
 
@@ -214,38 +238,69 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 		lines.push(`**Execution Order**: ${phase.exeOrderIdx}`)
 		lines.push("")
 
-		// Prerequisites
-		if (phase.prerequisites && phase.prerequisites.length > 0) {
-			lines.push("**Prerequisites:**")
-			phase.prerequisites.forEach((prereq) => {
-				lines.push(`${prereq}`)
+		// Check if this is FINAL phase
+		const isFinalPhase = phase.phaseIdx === plan.phases.length || 
+							 phase.title.toLowerCase().includes('final') ||
+							 phase.title.toLowerCase().includes('통합') ||
+							 phase.title.toLowerCase().includes('검증')
+
+		// Dependencies/Prerequisites (unified handling)
+		const deps = phase.dependencies || phase.prerequisites || []
+		if (deps.length > 0) {
+			const depTitle = isFinalPhase ? "Prerequisites" : "Dependencies"
+			lines.push(`**${depTitle}:**`)
+			deps.forEach((dep) => {
+				lines.push(`- ${dep}`)
 			})
 			lines.push("")
 		}
 
-		// Related Requirements
-		if (phase.relatedRequirements && phase.relatedRequirements.length > 0) {
+		// Explain (new structure)
+		if (phase.explain && phase.explain.length > 0) {
+			lines.push("**설명:**")
+			phase.explain.forEach((exp) => {
+				lines.push(`- ${exp}`)
+			})
+			lines.push("")
+		}
+
+		// Requirements (new structure) - only for non-FINAL phases
+		if (!isFinalPhase && phase.requirements && phase.requirements.list && phase.requirements.list.length > 0) {
+			lines.push("**Requirements:**")
+			phase.requirements.list.forEach((req) => {
+				lines.push(`- **${req.id}**: ${req.description}`)
+			})
+			if (phase.requirements.note) {
+				lines.push("")
+				lines.push(`*Note: ${phase.requirements.note}*`)
+			}
+			lines.push("")
+		}
+
+		// Related Requirements (legacy support) - only for non-FINAL phases
+		if (!isFinalPhase && phase.relatedRequirements && phase.relatedRequirements.length > 0) {
 			lines.push("**Related Requirements:**")
 			phase.relatedRequirements.forEach((req) => {
-				lines.push(`${req}`)
+				lines.push(`- ${req}`)
 			})
 			lines.push("")
 		}
 
-		// Core Objectives
-		if (phase.coreObjectives && phase.coreObjectives.length > 0) {
-			lines.push("**Core Objectives:**")
-			phase.coreObjectives.forEach((obj) => {
-				lines.push(`${obj}`)
+		// Objectives (unified handling)
+		const objectives = phase.objectives || phase.coreObjectives || phase.integrationObjectives || []
+		if (objectives.length > 0) {
+			lines.push("**Objectives:**")
+			objectives.forEach((obj) => {
+				lines.push(`- ${obj}`)
 			})
 			lines.push("")
 		}
 
-		// Functional Requirements
-		if (phase.functionalRequirements && phase.functionalRequirements.length > 0) {
+		// Functional Requirements (legacy support) - only for non-FINAL phases
+		if (!isFinalPhase && phase.functionalRequirements && phase.functionalRequirements.length > 0) {
 			lines.push("**Functional Requirements:**")
 			phase.functionalRequirements.forEach((req) => {
-				lines.push(`${req}`)
+				lines.push(`- ${req}`)
 			})
 			lines.push("")
 		}
@@ -254,51 +309,34 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 		if (phase.deliverables && phase.deliverables.length > 0) {
 			lines.push("**Deliverables:**")
 			phase.deliverables.forEach((deliverable) => {
-				lines.push(`${deliverable}`)
+				lines.push(`- ${deliverable}`)
 			})
 			lines.push("")
 		}
 
-		// Non-Functional Requirements
-		if (phase.nonFunctionalRequirements && phase.nonFunctionalRequirements.length > 0) {
+		// Non-Functional Requirements (legacy support) - only for non-FINAL phases
+		if (!isFinalPhase && phase.nonFunctionalRequirements && phase.nonFunctionalRequirements.length > 0) {
 			lines.push("**Non-Functional Requirements:**")
 			phase.nonFunctionalRequirements.forEach((req) => {
-				lines.push(`${req}`)
+				lines.push(`- ${req}`)
 			})
 			lines.push("")
 		}
 
-		// Completion Criteria
-		if (phase.completionCriteria && phase.completionCriteria.length > 0) {
-			lines.push("**Completion Criteria:**")
-			phase.completionCriteria.forEach((criteria) => {
+		// Completion Criteria / Validation Checklist (unified handling)
+		const completionItems = phase.completionCriteria || phase.validationChecklist || phase.handoffChecklist || phase.finalDeliverables || []
+		if (completionItems.length > 0) {
+			const criteriaTitle = isFinalPhase ? "Validation Checklist" : "Completion Criteria"
+			lines.push(`**${criteriaTitle}:**`)
+			completionItems.forEach((criteria) => {
 				const status = criteria.completed ? "☑" : "☐"
 				lines.push(`${status} ${criteria.description}`)
 			})
 			lines.push("")
 		}
 
-		// Handoff Checklist
-		if (phase.handoffChecklist && phase.handoffChecklist.length > 0) {
-			lines.push("**Handoff Checklist:**")
-			phase.handoffChecklist.forEach((item) => {
-				const status = item.completed ? "☑" : "☐"
-				lines.push(`${status} ${item.description}`)
-			})
-			lines.push("")
-		}
-
-		// FINAL phase specific fields
-		if (phase.phaseIdx === plan.phases.length) {
-			// Assuming FINAL is the last phase
-			if (phase.integrationObjectives && phase.integrationObjectives.length > 0) {
-				lines.push("**Integration Objectives:**")
-				phase.integrationObjectives.forEach((obj) => {
-					lines.push(`- ${obj}`)
-				})
-				lines.push("")
-			}
-
+		// FINAL phase specific fields (additional legacy fields)
+		if (isFinalPhase) {
 			if (phase.integrationSteps && phase.integrationSteps.length > 0) {
 				lines.push("**Integration Steps:**")
 				phase.integrationSteps.forEach((step) => {
@@ -323,15 +361,6 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 				})
 				lines.push("")
 			}
-
-			if (phase.finalDeliverables && phase.finalDeliverables.length > 0) {
-				lines.push("**Final Deliverables:**")
-				phase.finalDeliverables.forEach((deliverable) => {
-					const status = deliverable.completed ? "☑" : "☐"
-					lines.push(`${status} ${deliverable.description}`)
-				})
-				lines.push("")
-			}
 		}
 
 		lines.push("---")
@@ -344,7 +373,6 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 	lines.push(`| Metric | Count |`)
 	lines.push(`|--------|-------|`)
 	lines.push(`| **Total Phases** | ${plan.phases.length} |`)
-	lines.push(`| **Total Requirements** | ${Object.keys(plan.requirements).length} |`)
 	lines.push("")
 	lines.push("---")
 	lines.push("")

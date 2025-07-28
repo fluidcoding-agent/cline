@@ -67,37 +67,37 @@ export function extractTagAsLines(tag: string, source: string, removeListMarkers
  */
 function projectOverviewToMarkdown(projOverview: ProjectOverview): string {
 	const lines: string[] = []
-	
+
 	if (projOverview.title) {
 		lines.push(`**제목**: ${projOverview.title}`)
 		lines.push("")
 	}
-	
+
 	if (projOverview.projectVision && projOverview.projectVision.length > 0) {
 		lines.push("**프로젝트 비전**:")
-		projOverview.projectVision.forEach(vision => {
+		projOverview.projectVision.forEach((vision) => {
 			lines.push(`- ${vision}`)
 		})
 		lines.push("")
 	}
-	
+
 	if (projOverview.common && projOverview.common.length > 0) {
 		lines.push("**공통 요구사항**:")
-		projOverview.common.forEach(common => {
+		projOverview.common.forEach((common) => {
 			lines.push(`- ${common}`)
 		})
 		lines.push("")
 	}
-	
+
 	if (projOverview.primaryObjectives && projOverview.primaryObjectives.length > 0) {
 		lines.push("**주요 목표**:")
-		projOverview.primaryObjectives.forEach(objective => {
+		projOverview.primaryObjectives.forEach((objective) => {
 			const status = objective.completed ? "☑" : "☐"
 			lines.push(`${status} ${objective.description}`)
 		})
 		lines.push("")
 	}
-	
+
 	return lines.join("\n").trim()
 }
 
@@ -120,7 +120,6 @@ export async function saveParsedPlanAsMarkdown(
 
 		const snapshotUri = await createSnapshot(fileUri, saveUri, taskId)
 		return { fileUri, snapshotUri }
-		
 	} catch (error) {
 		console.error("[saveParsedPlanAsMarkdown] Failed to save plan:", error)
 		return { fileUri: undefined, snapshotUri: undefined }
@@ -239,10 +238,11 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 		lines.push("")
 
 		// Check if this is FINAL phase
-		const isFinalPhase = phase.phaseIdx === plan.phases.length || 
-							 phase.title.toLowerCase().includes('final') ||
-							 phase.title.toLowerCase().includes('통합') ||
-							 phase.title.toLowerCase().includes('검증')
+		const isFinalPhase =
+			phase.phaseIdx === plan.phases.length ||
+			phase.title.toLowerCase().includes("final") ||
+			phase.title.toLowerCase().includes("통합") ||
+			phase.title.toLowerCase().includes("검증")
 
 		// Dependencies/Prerequisites (unified handling)
 		const deps = phase.dependencies || phase.prerequisites || []
@@ -324,7 +324,8 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 		}
 
 		// Completion Criteria / Validation Checklist (unified handling)
-		const completionItems = phase.completionCriteria || phase.validationChecklist || phase.handoffChecklist || phase.finalDeliverables || []
+		const completionItems =
+			phase.completionCriteria || phase.validationChecklist || phase.handoffChecklist || phase.finalDeliverables || []
 		if (completionItems.length > 0) {
 			const criteriaTitle = isFinalPhase ? "Validation Checklist" : "Completion Criteria"
 			lines.push(`**${criteriaTitle}:**`)

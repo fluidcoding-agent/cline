@@ -1,6 +1,6 @@
 import { Phase, Subtask, ProjectOverview } from "./phase-tracker"
 
-/** 
+/**
  * Build the system / user prompt that will be fed to the LLM for one *execution*
  * phase ( i.e. ** after**  the planning phase has produced the full roadmap ).
  *
@@ -17,12 +17,10 @@ export function buildPhasePrompt(phase: Phase, total: number, projectOverview: P
 
 	// Build requirements section
 	let requirementsSection = ""
-	
+
 	if (phase.requirements && phase.requirements.list.length > 0) {
-		const requirementsList = phase.requirements.list
-			.map((req) => `- ${req.id}: ${req.description}`)
-			.join("\n")
-		
+		const requirementsList = phase.requirements.list.map((req) => `- ${req.id}: ${req.description}`).join("\n")
+
 		requirementsSection = `**Requirements** delivers small-unit sub-tasks that must be accomplished in the current Phase with REQ-XXX format IDs and their descriptions. Each Phase must complete all of the multiple sub-tasks, performing them from the macro perspective of project overview and from the Phase perspective considering objectives.
 
 ### Requirements
@@ -30,7 +28,7 @@ export function buildPhasePrompt(phase: Phase, total: number, projectOverview: P
 ${requirementsList}
 
 `
-		
+
 		// Add note section separately if exists
 		if (phase.requirements.note) {
 			requirementsSection += `**Note** explains the order and flow in which the REQs existing in Requirements should be performed. Please carry out the work based on this.
@@ -42,7 +40,6 @@ ${phase.requirements.note}
 `
 		}
 	}
-	
 
 	// Build dependencies section
 	let dependenciesSection = ""
@@ -57,11 +54,11 @@ ${dependenciesList}
 `
 	}
 
-	// Build explain section  
+	// Build explain section
 	let explainSection = ""
 	if (phase.explain && phase.explain.length > 0) {
 		const explainContent = phase.explain.map((item) => `- ${item}`).join("\n")
-		explainSection =`**Phase Explanation** defines the tasks to be performed in this Phase. Please familiarize yourself with this first and check the following items.
+		explainSection = `**Phase Explanation** defines the tasks to be performed in this Phase. Please familiarize yourself with this first and check the following items.
 
 ### Phase Explanation
 
@@ -99,9 +96,7 @@ ${commonContent}
 	// Build primary objectives section
 	let primaryObjectivesSection = ""
 	if (projectOverview.primaryObjectives && projectOverview.primaryObjectives.length > 0) {
-		const objectivesContent = projectOverview.primaryObjectives
-			.map((item) => `${item.index}. ${item.description}`)
-			.join("\n")
+		const objectivesContent = projectOverview.primaryObjectives.map((item) => `${item.index}. ${item.description}`).join("\n")
 		primaryObjectivesSection = `**Primary Objectives** lists the main goals that the entire project aims to achieve. All phase work should contribute to accomplishing these primary objectives.
 
 ### Primary Objectives
@@ -141,7 +136,7 @@ ${deliverables}
 	let completionSection = ""
 	if (phase.completionCriteria && phase.completionCriteria.length > 0) {
 		const criteria = phase.completionCriteria
-			.map((item) => `- [${item.completed ? 'x' : ' '}] ${item.description}`)
+			.map((item) => `- [${item.completed ? "x" : " "}] ${item.description}`)
 			.join("\n")
 		completionSection = `Once all Phase work is completed, finally verify and check that the items listed in **Completion Criteria** have been properly accomplished. All items must be satisfied without exception.
 
@@ -150,7 +145,7 @@ ${deliverables}
 ${criteria}
 
 `
-	} 
+	}
 
 	// Final prompt -------------------------------------------------------------
 	return `# The title of the entire project is ${projectOverview.title}.

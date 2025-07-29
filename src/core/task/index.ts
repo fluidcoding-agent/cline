@@ -96,7 +96,13 @@ import { updateApiReqMsg } from "./utils"
 import { Mode, OpenaiReasoningEffort } from "@shared/storage/types"
 import { ShowMessageType } from "@/shared/proto/index.host"
 // planning
-import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile, PhaseStatus } from "../planning/phase-tracker"
+import {
+	PhaseTracker,
+	parsePlanFromOutput,
+	parsePlanFromFixedFile,
+	PhaseStatus,
+	ProjectOverview,
+} from "../planning/phase-tracker"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
 import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
@@ -1215,21 +1221,20 @@ export class Task {
 
 				const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 				if (!this.sidebarController.phaseTracker) {
-					throw new Error("PhaseTracker not initialized")
+					this.sidebarController.phaseTracker = new PhaseTracker(
+						"Project Overview",
+						"Execution Plan",
+						this.sidebarController,
+					)
 				}
 				this.sidebarController.phaseTracker.updateTaskIdPhase(0, this.taskId)
-				// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
+
 				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
-				// TODO: PLANNING
-				const {
-					projOverview,
-					executionPlan,
-					requirements,
-					phases: planSteps,
-				} = parsePlanFromOutput(firstAssistantMessage)
-				// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
-				const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
+
+				// Phase Plan을 parsing하여 구조화된 데이터로 변환
+				const { projOverview, executionPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+				// const { projOverview, executionPlan, phases: planSteps } = parsePlanFromOutput(userBlocks)
+				const parsedPlan = { projOverview, executionPlan, phases: planSteps }
 				const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch(
 					(error) => {
 						console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)
@@ -1249,9 +1254,8 @@ export class Task {
 					diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
 				}
 				if (!diffExisted) {
-					this.sidebarController.phaseTracker!.projOverview = projOverview
+					this.sidebarController.phaseTracker!.parsedProjOverview = projOverview
 					this.sidebarController.phaseTracker!.executionPlan = executionPlan
-					this.sidebarController.phaseTracker!.requirements = requirements
 					this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
 				}
 
@@ -1480,11 +1484,12 @@ export class Task {
 			const mdBuf = await vscode.workspace.fs.readFile(planUri)
 			const mdRaw = Buffer.from(mdBuf).toString("utf8")
 
-			const { projOverview, executionPlan, requirements, phases } = parsePlanFromOutput(mdRaw, true)
+			const { projOverview, executionPlan, phases } = parsePlanFromOutput(mdRaw, true)
 
-			this.sidebarController.phaseTracker!.projOverview = projOverview
+			// parsePlanFromOutput now returns ProjectOverview object, but PhaseTracker.projOverview is still string
+			// We need to update both the original string and parsed object
+			this.sidebarController.phaseTracker!.parsedProjOverview = projOverview
 			this.sidebarController.phaseTracker!.executionPlan = executionPlan
-			this.sidebarController.phaseTracker!.requirements = requirements
 			this.sidebarController.phaseTracker!.replacePhasesFromPlan(phases)
 
 			// Save checkpoint with updated plan
@@ -1770,7 +1775,7 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "anthropic/claude-sonnet-4")
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
 		let assistantText = ""
 		const start = performance.now()
 
@@ -1782,7 +1787,7 @@ export class Task {
 		let totalCost: number | undefined
 
 		// Create a partial message for streaming updates
-		await this.say("text", "Planning in progress...", undefined, undefined, true)
+		await this.say("text", "*Planning in progress...*", undefined, undefined, true)
 
 		// Track progress
 		let totalChunks = 0
@@ -1900,23 +1905,19 @@ export class Task {
 
 			// Create a checkpoint commit and update clineMessages with a commitHash
 			if (this.checkpointTracker) {
-				// We are letting this run in a non-blocking way so that the UI doesn't freeze when creating checkpoints.
-				// We show that a checkpoint is created in the chatview, then in the background run the git operation (which can take multiple seconds for large shadow git repos), and once that's been completed update the previous checkpoint message with the newly created hash to be associated with.
-				// NOTE: the attempt completion flow is different in that it requires the latest checkpoint hash to be present before determining if it can present the 'see new changes' button. In ToolExecutor, when we call saveCheckpoint(true), we must make sure that the checkpoint hash is present in the last completion_result message before returning, since it is always followed by a addNewChangesFlagToLastCompletionResultMessage(), which calls doesLatestTaskCompletionHaveNewChanges() that uses the latest message hash to determine if there any changes since the last attempt_completion checkpoint.
-				await this.say("checkpoint_created")
-				this.checkpointTracker.commit().then(async (commitHash) => {
-					if (commitHash) {
-						const lastCheckpointMessageIndex = findLastIndex(
-							this.messageStateHandler.getClineMessages(),
-							(m) => m.say === "checkpoint_created",
-						)
-						if (lastCheckpointMessageIndex !== -1) {
-							await this.messageStateHandler.updateClineMessage(lastCheckpointMessageIndex, {
-								lastCheckpointHash: commitHash,
-							})
-						}
+				const commitHash = await this.checkpointTracker.commit()
+				if (commitHash) {
+					await this.say("checkpoint_created")
+					const lastCheckpointMessageIndex = findLastIndex(
+						this.messageStateHandler.getClineMessages(),
+						(m) => m.say === "checkpoint_created",
+					)
+					if (lastCheckpointMessageIndex !== -1) {
+						await this.messageStateHandler.updateClineMessage(lastCheckpointMessageIndex, {
+							lastCheckpointHash: commitHash,
+						})
 					}
-				})
+				}
 			} // silently fails for now
 
 			//

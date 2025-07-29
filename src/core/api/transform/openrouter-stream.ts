@@ -88,7 +88,6 @@ export async function createOpenRouterStream(
 	// (models usually default to max tokens allowed)
 	let maxTokens: number | undefined
 	switch (model.id) {
-		case "anthropic/claude-sonnet-4":
 		case "anthropic/claude-opus-4.1":
 		case "anthropic/claude-opus-4":
 		case "anthropic/claude-3.7-sonnet":
@@ -105,6 +104,9 @@ export async function createOpenRouterStream(
 		case "anthropic/claude-3-5-haiku-20241022":
 		case "anthropic/claude-3-5-haiku-20241022:beta":
 			maxTokens = 8_192
+			break
+		case "anthropic/claude-sonnet-4": // TODO: (sa)
+			maxTokens = 16_384
 			break
 	}
 

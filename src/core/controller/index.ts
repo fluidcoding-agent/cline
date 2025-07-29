@@ -206,7 +206,7 @@ export class Controller {
 		const useAutoCondense = this.cacheService.getGlobalStateKey("useAutoCondense")
 
 		// Initialize PhaseTracker based on priority
-		const createTracker = () => new PhaseTracker("", "", {}, this)
+		const createTracker = () => new PhaseTracker("", "", this)
 
 		// Attempt to restore from checkpoint, return null if failed
 		const restored = await createTracker()

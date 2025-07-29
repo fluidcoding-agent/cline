@@ -89,11 +89,8 @@ export class ToolExecutor {
 		private clineIgnoreController: ClineIgnoreController,
 		private workspaceTracker: WorkspaceTracker,
 		private contextManager: ContextManager,
-<<<<<<< HEAD
 		private cacheService: CacheService,
-=======
 		private sidebarController: Controller,
->>>>>>> 1ae47598b (Add ui for planning toggle (#30))
 
 		// Configuration & Settings
 		private autoApprovalSettings: AutoApprovalSettings,

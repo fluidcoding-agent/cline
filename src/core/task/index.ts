@@ -1771,6 +1771,7 @@ export class Task {
 
 		// reuse the existing streaming machinery
 		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "anthropic/claude-sonnet-4")
+		// const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "moonshotai/kimi-k2")
 		let assistantText = ""
 		const start = performance.now()
 
@@ -1782,7 +1783,7 @@ export class Task {
 		let totalCost: number | undefined
 
 		// Create a partial message for streaming updates
-		await this.say("text", "Planning in progress...", undefined, undefined, true)
+		await this.say("text", "*Planning in progress...*", undefined, undefined, true)
 
 		// Track progress
 		let totalChunks = 0

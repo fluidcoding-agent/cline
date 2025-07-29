@@ -41,6 +41,7 @@ export interface Phase {
 	deliverables?: string[]
 	completionCriteria?: Subtask[]
 	validationChecklist?: Subtask[]
+	// Legacy fields for backward compatibility
 	prerequisites?: string[]
 	relatedRequirements?: string[]
 	requirementCoverage?: string[]

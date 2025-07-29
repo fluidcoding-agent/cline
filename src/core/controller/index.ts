@@ -213,7 +213,7 @@ export class Controller {
 		} = await getAllExtensionState(this.context)
 
 		// Initialize PhaseTracker based on priority
-		const createTracker = () => new PhaseTracker("", "", {}, this)
+		const createTracker = () => new PhaseTracker("", "", this)
 
 		// Attempt to restore from checkpoint, return null if failed
 		const restored = await createTracker()

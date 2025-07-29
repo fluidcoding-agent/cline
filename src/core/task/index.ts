@@ -1770,8 +1770,7 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "anthropic/claude-sonnet-4")
-		// const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "moonshotai/kimi-k2")
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
 		let assistantText = ""
 		const start = performance.now()
 

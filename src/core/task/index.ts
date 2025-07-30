@@ -396,19 +396,6 @@ export class Task {
 		}
 	}
 
-	// Create a temporary API handler with a specific model
-	private createTemporaryApiHandler(modelName: string): ApiHandler {
-		// Get apiProvider and other properties directly from the original API
-		const tempConfig: ApiConfiguration = {
-			...this.originalApiConfiguration,
-			actModeOpenRouterModelId: modelName, // Override with the requested model
-			taskId: this.taskId, // Ensure task ID is preserved
-		}
-
-		// Build and return the temporary API handler
-		return buildApiHandler(tempConfig, this.mode)
-	}
-
 	async restoreCheckpoint(messageTs: number, restoreType: ClineCheckpointRestore, offset?: number) {
 		const clineMessages = this.messageStateHandler.getClineMessages()
 		const messageIndex = clineMessages.findIndex((m) => m.ts === messageTs) - (offset || 0)

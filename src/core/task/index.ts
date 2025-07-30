@@ -406,7 +406,7 @@ export class Task {
 		}
 
 		// Build and return the temporary API handler
-		return buildApiHandler(tempConfig, this.chatSettings.mode)
+		return buildApiHandler(tempConfig, this.mode)
 	}
 
 	async restoreCheckpoint(messageTs: number, restoreType: ClineCheckpointRestore, offset?: number) {
@@ -2249,7 +2249,7 @@ export class Task {
 		return { modelId, providerId }
 	}
 
-	async *attemptApiRequest(previousApiReqIndex: number, forceModel?: string): ApiStream {
+	async *attemptApiRequest(previousApiReqIndex: number): ApiStream {
 		// Wait for MCP servers to be connected before generating system prompt
 		await pWaitFor(() => this.mcpHub.isConnecting !== true, { timeout: 10_000 }).catch(() => {
 			console.error("MCP servers failed to connect in time")
@@ -2263,8 +2263,7 @@ export class Task {
 
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
-		const apiToUse = this.taskState.isPhaseRoot && forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
-		const isNextGenModel = isClaude4ModelFamily(apiToUse) || isGemini2dot5ModelFamily(apiToUse)
+		const isNextGenModel = isClaude4ModelFamily(this.api) || isGemini2dot5ModelFamily(this.api)
 		let systemPrompt = await SYSTEM_PROMPT(this.cwd, supportsBrowserUse, this.mcpHub, this.browserSettings, isNextGenModel)
 
 		const preferredLanguage = getLanguageKey(this.preferredLanguage as LanguageDisplay)
@@ -2328,7 +2327,7 @@ export class Task {
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
 		// Use forced model if specified, otherwise use default api
-		const stream = apiToUse.createMessage(
+		const stream = this.api.createMessage(
 			this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePhasePlanning ? PROMPTS.PLANNING : systemPrompt,
 			contextManagementMetadata.truncatedConversationHistory,
 		)

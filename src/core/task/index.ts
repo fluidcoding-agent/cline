@@ -2278,9 +2278,10 @@ export class Task {
 
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
-		const isNextGenModel = isClaude4ModelFamily(this.api) || isGemini2dot5ModelFamily(this.api) || isGrok4ModelFamily(this.api)
-		let systemPrompt = await SYSTEM_PROMPT(this.cwd, supportsBrowserUse, this.mcpHub, this.browserSettings, isNextGenModel)
+		const isNextGenModel =
+			isClaude4ModelFamily(this.api) || isGemini2dot5ModelFamily(this.api) || isGrok4ModelFamily(this.api)
 
+		// Prepare custom instructions before calling SYSTEM_PROMPT
 		const preferredLanguage = getLanguageKey(this.preferredLanguage as LanguageDisplay)
 		const preferredLanguageInstructions =
 			preferredLanguage && preferredLanguage !== DEFAULT_LANGUAGE_SETTINGS
@@ -2306,6 +2307,7 @@ export class Task {
 			clineIgnoreInstructions = formatResponse.clineIgnoreInstructions(clineIgnoreContent)
 		}
 
+		let customInstructions: string | undefined
 		if (
 			globalClineRulesFileInstructions ||
 			localClineRulesFileInstructions ||
@@ -2316,7 +2318,7 @@ export class Task {
 			preferredLanguageInstructions
 		) {
 			// altering the system prompt mid-task will break the prompt cache, but in the grand scheme this will not change often so it's better to not pollute user messages with it the way we have to with <potentially relevant details>
-			const userInstructions = addUserInstructions(
+			customInstructions = addUserInstructions(
 				globalClineRulesFileInstructions,
 				localClineRulesFileInstructions,
 				localCursorRulesFileInstructions,
@@ -2325,8 +2327,18 @@ export class Task {
 				clineIgnoreInstructions,
 				preferredLanguageInstructions,
 			)
-			systemPrompt += userInstructions
 		}
+
+		// Pass customInstructions to SYSTEM_PROMPT - it will handle whether to use modular or legacy system
+		let systemPrompt = await SYSTEM_PROMPT(
+			this.cwd,
+			supportsBrowserUse,
+			this.mcpHub,
+			this.browserSettings,
+			isNextGenModel,
+			undefined,
+			customInstructions,
+		)
 		const contextManagementMetadata = await this.contextManager.getNewContextMessagesAndMetadata(
 			this.messageStateHandler.getApiConversationHistory(),
 			this.messageStateHandler.getClineMessages(),

@@ -5,7 +5,11 @@ import { McpHub } from "@services/mcp/McpHub"
 import { BrowserSettings } from "@shared/BrowserSettings"
 import { SYSTEM_PROMPT_CLAUDE4_EXPERIMENTAL } from "@core/prompts/model_prompts/claude4-experimental"
 import { SYSTEM_PROMPT_CLAUDE4 } from "@core/prompts/model_prompts/claude4"
-import { USE_EXPERIMENTAL_CLAUDE4_FEATURES } from "@core/task/index"
+import { USE_EXPERIMENTAL_CLAUDE4_FEATURES } from "@core/task/index";
+
+// Modular system will be dynamically imported when needed to reduce bundle size
+// Use environment variable USE_MODULAR_SYSTEM_PROMPT=true to enable modular system
+const MODULAR_SYSTEM_ENV_VAR = 'USE_MODULAR_SYSTEM_PROMPT'; 
 
 export const SYSTEM_PROMPT = async (
 	cwd: string,
@@ -13,14 +17,31 @@ export const SYSTEM_PROMPT = async (
 	mcpHub: McpHub,
 	browserSettings: BrowserSettings,
 	isNextGenModel: boolean = false,
+	useModularSystem?: boolean,
+	customInstructions?: string,
 ) => {
+	// Check if modular system should be used
+	const shouldUseModularSystem = useModularSystem ?? process.env[MODULAR_SYSTEM_ENV_VAR] === 'true';
+	
+	if (shouldUseModularSystem) {
+		try {
+			// Dynamic import to reduce bundle size and avoid loading modular system when not needed
+			const { SYSTEM_PROMPT: MODULAR_SYSTEM_PROMPT } = await import("./system/system");
+			// Note: customInstructions will be passed to modular system, which will handle it internally
+			return await MODULAR_SYSTEM_PROMPT(cwd, supportsBrowserUse, mcpHub, browserSettings, isNextGenModel, customInstructions);
+		} catch (error) {
+			console.warn('Failed to use modular system prompt, falling back to legacy system:', error);
+			// Fall through to legacy system
+		}
+	}
+
 	if (isNextGenModel && USE_EXPERIMENTAL_CLAUDE4_FEATURES) {
 		return SYSTEM_PROMPT_CLAUDE4_EXPERIMENTAL(cwd, supportsBrowserUse, mcpHub, browserSettings)
 	}
 
-  	if (isNextGenModel) {
-		return SYSTEM_PROMPT_CLAUDE4(cwd, supportsBrowserUse, mcpHub, browserSettings)
-  	}
+  if (isNextGenModel) {
+    return SYSTEM_PROMPT_CLAUDE4(cwd, supportsBrowserUse, mcpHub, browserSettings)
+  }
 
 	return `You are Cline, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns, and best practices.
 
@@ -648,6 +669,7 @@ You accomplish a given task iteratively, breaking it down into clear steps and w
 4. Once you've completed the user's task, you must use the attempt_completion tool to present the result of the task to the user. You may also provide a CLI command to showcase the result of your task; this can be particularly useful for web development tasks, where you can run e.g. \`open index.html\` to show the website you've built.
 5. The user may provide feedback, which you can use to make improvements and try again. But DO NOT continue in pointless back and forth conversations, i.e. don't end your responses with questions or offers for further assistance.`
 	}
+
 
 export function addUserInstructions(
 	globalClineRulesFileInstructions?: string,

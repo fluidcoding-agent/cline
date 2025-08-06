@@ -5,6 +5,10 @@ import { getShell } from "@utils/shell"
 import os from "os"
 import osName from "os-name"
 
+// Modular system will be dynamically imported when needed to reduce bundle size
+// Use environment variable USE_MODULAR_SYSTEM_PROMPT=true to enable modular system
+const MODULAR_SYSTEM_ENV_VAR = 'USE_MODULAR_SYSTEM_PROMPT'; 
+
 export const SYSTEM_PROMPT_GENERIC = async (
 	cwd: string,
 	supportsBrowserUse: boolean,
@@ -12,6 +16,21 @@ export const SYSTEM_PROMPT_GENERIC = async (
 	browserSettings: BrowserSettings,
 	focusChainSettings: FocusChainSettings,
 ) => {
+	// Check if modular system should be used
+	const shouldUseModularSystem = process.env[MODULAR_SYSTEM_ENV_VAR] === 'true'
+	
+	if (shouldUseModularSystem) {
+		try {
+			// Dynamic import to reduce bundle size and avoid loading modular system when not needed
+			const { SYSTEM_PROMPT: MODULAR_SYSTEM_PROMPT } = await import("../system/system")
+			// Note: customInstructions will be passed to modular system, which will handle it internally
+			return await MODULAR_SYSTEM_PROMPT(cwd, supportsBrowserUse, mcpHub, browserSettings, focusChainSettings)
+		} catch (error) {
+			console.warn('Failed to use modular system prompt, falling back to legacy system:', error)
+			// Fall through to legacy system
+		}
+	}
+
 	return `You are Cline, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns, and best practices.
 
 ====

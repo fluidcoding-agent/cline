@@ -1241,7 +1241,7 @@ export class Task {
 				}
 				this.sidebarController.phaseTracker.updateTaskIdPhase(0, this.taskId)
 
-				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
+				const saveUri = await this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
 
 				// Phase Plan을 parsing하여 구조화된 데이터로 변환
 				const { projOverview, executionPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
@@ -1351,7 +1351,6 @@ export class Task {
 			}
 			this.taskState.newPhaseOpened = false
 		}
-		this.sidebarController.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
@@ -2100,7 +2099,22 @@ export class Task {
 		}
 		Logger.info("Executing command in terminal: " + command)
 
-		const terminalInfo = await this.terminalManager.getOrCreateTerminal(this.cwd)
+		// Try to get current working directory from existing terminal first
+		const terminals = this.terminalManager.filterTerminals((t) => !t.busy)
+		const activeTerminal = terminals[0]
+
+		// If we have an active terminal, use it without changing directory
+		// Only use task's initial cwd if no terminal exists
+		let terminalInfo: any
+		if (activeTerminal) {
+			const currentCwd = activeTerminal.terminal.shellIntegration?.cwd?.fsPath || "unknown"
+			console.log(`[Task] Reusing existing terminal in directory: ${currentCwd}`)
+			// Pass the terminal's current directory to avoid unnecessary cd commands
+			terminalInfo = await this.terminalManager.getOrCreateTerminal(currentCwd)
+		} else {
+			console.log(`[Task] Creating new terminal in task cwd: ${this.cwd}`)
+			terminalInfo = await this.terminalManager.getOrCreateTerminal(this.cwd)
+		}
 		terminalInfo.terminal.show() // weird visual bug when creating new terminals (even manually) where there's an empty space at the top.
 		const process = this.terminalManager.runCommand(terminalInfo, command)
 

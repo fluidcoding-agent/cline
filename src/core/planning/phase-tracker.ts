@@ -1,6 +1,9 @@
 import * as vscode from "vscode"
+import { HostProvider } from "@/hosts/host-provider"
 import { Controller } from "../controller"
 import { extractTag, extractTagAsLines, PHASE_RETRY_LIMIT } from "./utils"
+import { writeFile, fileExistsAtPath, createDirectoriesForFile } from "@/utils/fs"
+import fs from "fs/promises"
 
 export enum PhaseStatus {
 	Pending = "pending",
@@ -849,8 +852,7 @@ export async function parsePlanFromFixedFile(
 		const devPlanFileUri = vscode.Uri.joinPath(extensionContext.extensionUri, "src", "core", "assistant-message", "plan.txt")
 
 		console.log("[parsePlanFromFixedFile] Trying dev path:", devPlanFileUri.toString())
-		const planContentBytes = await vscode.workspace.fs.readFile(devPlanFileUri)
-		const planContent = new TextDecoder().decode(planContentBytes)
+		const planContent = await fs.readFile(devPlanFileUri.fsPath, "utf8")
 
 		console.log("[parsePlanFromFixedFile] Successfully loaded plan.txt from dev path")
 		console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
@@ -871,8 +873,7 @@ export async function parsePlanFromFixedFile(
 			)
 
 			console.log("[parsePlanFromFixedFile] Trying dist path:", planFileUri.toString())
-			const planContentBytes = await vscode.workspace.fs.readFile(planFileUri)
-			const planContent = new TextDecoder().decode(planContentBytes)
+			const planContent = await fs.readFile(planFileUri.fsPath, "utf8")
 
 			console.log("[parsePlanFromFixedFile] Successfully loaded plan.txt from dist path")
 			console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
@@ -1219,13 +1220,13 @@ export class PhaseTracker {
 		return this.projOverview
 	}
 
-	public getBaseUri(controller: Controller): vscode.Uri {
+	public async getBaseUri(controller: Controller): Promise<vscode.Uri> {
 		// Determine the base URI for storage (prefer workspace, fallback to globalStorage)
 		let baseUri: vscode.Uri
-		const ws = vscode.workspace.workspaceFolders
-		if (ws && ws.length > 0) {
+		const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
+		if (workspacePaths.paths && workspacePaths.paths.length > 0) {
 			// If workspace is open, create .cline directory under the first folder
-			baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
+			baseUri = vscode.Uri.joinPath(vscode.Uri.file(workspacePaths.paths[0]), ".cline")
 		} else {
 			// If no workspace is available, use the extension's globalStorageUri
 			// ("globalStorage" permission is required in package.json)
@@ -1235,10 +1236,10 @@ export class PhaseTracker {
 	}
 
 	public checkpointUri: vscode.Uri | undefined = undefined
-	get checkpointFileUri(): vscode.Uri {
+	async getCheckpointFileUri(): Promise<vscode.Uri> {
 		// Get the base URI for storage
 		if (!this.checkpointUri) {
-			const baseUri = this.getBaseUri(this.controller)
+			const baseUri = await this.getBaseUri(this.controller)
 			// Return the full path to the checkpoint file
 			this.checkpointUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
 			return this.checkpointUri
@@ -1251,11 +1252,10 @@ export class PhaseTracker {
 	/** Restore tracker progress from .cline/phase-checkpoint.json if present */
 	public async fromCheckpoint(): Promise<PhaseTracker | undefined> {
 		try {
-			const checkpointUri = this.checkpointFileUri
+			const checkpointUri = await this.getCheckpointFileUri()
 
 			// Read file
-			const data = await vscode.workspace.fs.readFile(checkpointUri)
-			const text = new TextDecoder().decode(data)
+			const text = await fs.readFile(checkpointUri.fsPath, "utf8")
 			const checkpoint = JSON.parse(text)
 
 			// Restore PhaseTracker
@@ -1278,13 +1278,11 @@ export class PhaseTracker {
 	public async saveCheckpoint(): Promise<void> {
 		try {
 			// 1) Determine the base URI for saving
-			const baseUri = this.getBaseUri(this.controller)
+			const baseUri = await this.getBaseUri(this.controller)
 
 			// 2) Create the .cline directory if it doesn't exist
-			try {
-				await vscode.workspace.fs.stat(baseUri)
-			} catch {
-				await vscode.workspace.fs.createDirectory(baseUri)
+			if (!(await fileExistsAtPath(baseUri.fsPath))) {
+				await createDirectoriesForFile(baseUri.fsPath)
 			}
 
 			// 3) Prepare checkpoint data
@@ -1297,12 +1295,11 @@ export class PhaseTracker {
 			}
 			const content = JSON.stringify(checkpointData, null, 2)
 
-			// Simply use the getter which already computes the proper URI
-			const checkpointUri = this.checkpointFileUri
+			// Simply use the method which already computes the proper URI
+			const checkpointUri = await this.getCheckpointFileUri()
 			const tmpUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json.tmp")
-			const encoder = new TextEncoder()
-			await vscode.workspace.fs.writeFile(tmpUri, encoder.encode(content))
-			await vscode.workspace.fs.rename(tmpUri, checkpointUri, { overwrite: true })
+			await writeFile(tmpUri.fsPath, content)
+			await fs.rename(tmpUri.fsPath, checkpointUri.fsPath)
 
 			// Note: Plan markdown is saved during initial parsing, not during checkpoint saves
 		} catch (error) {}
@@ -1310,43 +1307,33 @@ export class PhaseTracker {
 
 	public async deleteCheckpoint(): Promise<void> {
 		try {
-			const checkpointUri = this.checkpointFileUri
+			const checkpointUri = await this.getCheckpointFileUri()
 
-			try {
-				await vscode.workspace.fs.stat(checkpointUri)
+			if (await fileExistsAtPath(checkpointUri.fsPath)) {
 				console.log(`[deleteCheckpoint] File exists at: ${checkpointUri.toString()}`)
-			} catch (statError) {
+				await fs.unlink(checkpointUri.fsPath)
+			} else {
 				console.log(`[deleteCheckpoint] File does not exist at: ${checkpointUri.toString()}`)
 				return
 			}
-
-			await vscode.workspace.fs.delete(checkpointUri, {
-				recursive: false,
-				useTrash: false,
-			})
 			console.log(`[deleteCheckpoint] Successfully deleted: ${checkpointUri.toString()}`)
 		} catch (error) {}
 	}
 
 	public async deletePlanMD(): Promise<void> {
 		try {
-			const baseUri = this.getBaseUri(this.controller)
+			const baseUri = await this.getBaseUri(this.controller)
 			const taskId = this.phaseStates[0].taskId
 			const filename = `project-execution-plan-${taskId}.md`
 			const fileUri = vscode.Uri.joinPath(baseUri, filename)
 
-			try {
-				await vscode.workspace.fs.stat(fileUri)
+			if (await fileExistsAtPath(fileUri.fsPath)) {
 				console.log(`[deletePlanMD] File exists at: ${fileUri.toString()}`)
-			} catch (statError) {
+				await fs.unlink(fileUri.fsPath)
+			} else {
 				console.log(`[deletePlanMD] File does not exist at: ${fileUri.toString()}`)
 				return
 			}
-
-			await vscode.workspace.fs.delete(fileUri, {
-				recursive: false,
-				useTrash: false,
-			})
 			console.log(`[deletePlanMD] Successfully deleted: ${fileUri.toString()}`)
 		} catch (error) {}
 	}

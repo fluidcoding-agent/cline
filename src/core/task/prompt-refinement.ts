@@ -1,6 +1,8 @@
 import { ApiHandler } from "@api/index"
+import { HostProvider } from "@/hosts/host-provider"
 import { findLastIndex } from "@shared/array"
 import { ClineApiReqInfo, ClineAskQuestion, ClineMessage } from "@shared/ExtensionMessage"
+import { writeFile } from "@/utils/fs"
 import * as vscode from "vscode"
 
 export interface FollowUpQuestion {
@@ -167,10 +169,10 @@ async function saveRefinedPromptAsMarkdown(content: string, taskId: string): Pro
 		let saveUri: vscode.Uri
 
 		// 워크스페이스 폴더 확인
-		const workspaceFolders = vscode.workspace.workspaceFolders
-		if (workspaceFolders && workspaceFolders.length > 0) {
+		const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
+		if (workspacePaths.paths && workspacePaths.paths.length > 0) {
 			// 워크스페이스가 열려있으면 워크스페이스 루트에 저장
-			saveUri = workspaceFolders[0].uri
+			saveUri = vscode.Uri.file(workspacePaths.paths[0])
 		} else {
 			// 워크스페이스가 없으면 사용자의 홈 디렉토리에 저장
 			const homeDir = process.env.HOME || process.env.USERPROFILE || process.cwd()
@@ -180,14 +182,13 @@ async function saveRefinedPromptAsMarkdown(content: string, taskId: string): Pro
 		const filename = `refined-project-specification-${taskId}.md`
 		const fileUri = vscode.Uri.joinPath(saveUri, filename)
 
-		const encoder = new TextEncoder()
-		await vscode.workspace.fs.writeFile(fileUri, encoder.encode(content))
+		await writeFile(fileUri.fsPath, content)
 		console.log(`[saveRefinedPromptAsMarkdown] Refined prompt saved: ${fileUri.toString()}`)
 
 		// Save snapshot file
 		try {
 			const snapshotFileUri = vscode.Uri.joinPath(saveUri, `refined-project-specification-${taskId}-snapshot.md`)
-			await vscode.workspace.fs.writeFile(snapshotFileUri, encoder.encode(content))
+			await writeFile(snapshotFileUri.fsPath, content)
 			console.log(`[saveRefinedPromptAsMarkdown] Snapshot file created: ${snapshotFileUri.toString()}`)
 
 			// Make snapshot file read-only immediately after creation

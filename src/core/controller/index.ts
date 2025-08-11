@@ -22,7 +22,7 @@ import { clineEnvConfig } from "@/config"
 import { HostProvider } from "@/hosts/host-provider"
 import { AuthService } from "@/services/auth/AuthService"
 import { PostHogClientProvider, telemetryService } from "@/services/posthog/PostHogClientProvider"
-import { ShowMessageType } from "@/shared/proto/host/window"
+import { ShowMessageRequest, ShowMessageType } from "@/shared/proto/host/window"
 import { getLatestAnnouncementId } from "@/utils/announcements"
 import { getCwd, getDesktopDir } from "@/utils/path"
 import { CacheService, PersistenceErrorEvent } from "../storage/CacheService"
@@ -166,20 +166,30 @@ export class Controller {
 	 */
 	public async spawnNewTask(newPrompt?: string, images?: string[], files?: string[]): Promise<boolean> {
 		// initTask() already clears any existing task and phase tracker
-		const selection = await vscode.window.showInformationMessage(
-			"Planning 중 새로운 Task 생성 시 기존 Planning이 초기화 됩니다. \n 새로운 Task를 생성하시겠습니까?",
-			"Yes",
-			"No",
+		const response = await HostProvider.window.showMessage(
+			ShowMessageRequest.create({
+				type: ShowMessageType.INFORMATION,
+				message: "Planning 중 새로운 Task 생성 시 기존 Planning이 초기화 됩니다. \n 새로운 Task를 생성하시겠습니까?",
+				options: {
+					items: ["Yes", "No"],
+				},
+			}),
 		)
-		if (selection === "Yes") {
+
+		if (response.selectedOption === "Yes") {
 			this.phaseTracker?.deleteCheckpoint()
 			this.phaseTracker?.deletePlanMD()
 			this.phaseTracker = undefined
 			await this.initTask(newPrompt, images, files)
 			return true
 		} else {
-			// 사용자가 'Cancel'을 선택했을 때 실행할 로직
-			vscode.window.showInformationMessage("새로운 Task 생성이 취소되었습니다.")
+			// 사용자가 'No'를 선택하거나 취소했을 때 실행할 로직
+			if (response.selectedOption === "No") {
+				HostProvider.window.showMessage({
+					type: ShowMessageType.INFORMATION,
+					message: "새로운 Task 생성이 취소되었습니다.",
+				})
+			}
 			return false
 		}
 	}
@@ -787,11 +797,6 @@ export class Controller {
 		if (!current.status || current.status === "in-progress") {
 			await tracker.completePhase(currentIndex)
 		}
-	}
-
-	public async onTaskCompleted(): Promise<void> {
-		vscode.window.showInformationMessage("🎉 All phases finished!")
-		this.phaseTracker = undefined // reset phase tracker
 	}
 
 	public async spawnPhaseTask(phasePrompt: string, phaseId: number): Promise<string> {

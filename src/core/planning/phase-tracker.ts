@@ -1282,7 +1282,7 @@ export class PhaseTracker {
 
 			// 2) Create the .cline directory if it doesn't exist
 			if (!(await fileExistsAtPath(baseUri.fsPath))) {
-				await createDirectoriesForFile(baseUri.fsPath + "/dummy")
+				await createDirectoriesForFile(baseUri.fsPath)
 			}
 
 			// 3) Prepare checkpoint data

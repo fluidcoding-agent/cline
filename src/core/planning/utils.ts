@@ -1,7 +1,8 @@
 import * as vscode from "vscode"
 import { createTwoFilesPatch } from "diff"
 import { ParsedPlan, ProjectOverview, Subtask } from "./phase-tracker"
-import * as fs from "fs"
+import { writeFile, fileExistsAtPath } from "@/utils/fs"
+import fs from "fs/promises"
 
 export const PHASE_RETRY_LIMIT = 2
 export const PLANNING_MAX_RETRIES = 2
@@ -114,8 +115,7 @@ export async function saveParsedPlanAsMarkdown(
 		const filename = `project-execution-plan-${taskId}.md`
 		const fileUri = vscode.Uri.joinPath(saveUri, filename)
 
-		const encoder = new TextEncoder()
-		await vscode.workspace.fs.writeFile(fileUri, encoder.encode(mdContent))
+		await writeFile(fileUri.fsPath, mdContent)
 		console.log(`[saveParsedPlanAsMarkdown] Plan saved to: ${fileUri.fsPath}`)
 
 		const snapshotUri = await createSnapshot(fileUri, saveUri, taskId)
@@ -138,23 +138,22 @@ export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri, t
 	const filename = `project-execution-plan-${taskId}-snapshot.md`
 	const snapshotUri = vscode.Uri.joinPath(baseUri, filename)
 
-	try {
-		await vscode.workspace.fs.stat(snapshotUri)
+	if (await fileExistsAtPath(snapshotUri.fsPath)) {
 		return snapshotUri // If it exists, return the existing snapshot URI
-	} catch {}
+	}
 
 	// Simple temporary file for file-locking
 	const lockUri = vscode.Uri.joinPath(baseUri, "snapshot.lock")
 	try {
 		// Prevent other processes from creating it first
-		await vscode.workspace.fs.writeFile(lockUri, new Uint8Array())
-		const buf = await vscode.workspace.fs.readFile(planUri)
-		await vscode.workspace.fs.writeFile(snapshotUri, buf)
+		await writeFile(lockUri.fsPath, "")
+		const content = await fs.readFile(planUri.fsPath, "utf8")
+		await writeFile(snapshotUri.fsPath, content)
 
 		// Set the snapshot file as read-only to prevent accidental modifications
 		try {
 			// Use Node.js fs to set file as read-only
-			await fs.promises.chmod(snapshotUri.fsPath, 0o444) // Read-only for owner, group, and others
+			await fs.chmod(snapshotUri.fsPath, 0o444) // Read-only for owner, group, and others
 			console.log(`[createSnapshot] Set snapshot file as read-only: ${snapshotUri.fsPath}`)
 		} catch (permissionError) {
 			// If setting permissions fails, log but don't throw - snapshot still works
@@ -165,7 +164,7 @@ export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri, t
 	} finally {
 		// Release lock
 		try {
-			await vscode.workspace.fs.delete(lockUri)
+			await fs.unlink(lockUri.fsPath)
 		} catch {}
 	}
 }
@@ -176,16 +175,11 @@ export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri, t
  */
 export async function getPlanMarkdownDiff(planUri: vscode.Uri, snapshotUri: vscode.Uri): Promise<string | undefined> {
 	// If snapshot doesn't exist, return without performing diff
-	try {
-		await vscode.workspace.fs.stat(snapshotUri)
-	} catch {
+	if (!(await fileExistsAtPath(snapshotUri.fsPath))) {
 		return undefined
 	}
 
-	const [oldBuf, newBuf] = await Promise.all([vscode.workspace.fs.readFile(snapshotUri), vscode.workspace.fs.readFile(planUri)])
-
-	const oldText = Buffer.from(oldBuf).toString("utf8")
-	const newText = Buffer.from(newBuf).toString("utf8")
+	const [oldText, newText] = await Promise.all([fs.readFile(snapshotUri.fsPath, "utf8"), fs.readFile(planUri.fsPath, "utf8")])
 
 	if (oldText === newText) {
 		return undefined

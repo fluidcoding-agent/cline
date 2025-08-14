@@ -204,6 +204,40 @@ export const BUTTON_CONFIGS: Record<string, ButtonConfig> = {
 		primaryAction: undefined,
 		secondaryAction: "cancel",
 	},
+
+	// Planning
+	ask_proceed: {
+		sendingDisabled: true,
+		enableButtons: true,
+		primaryText: "Proceed",
+		secondaryText: "Reject",
+		primaryAction: "proceed",
+		secondaryAction: "reject",
+	},
+	ask_retry: {
+		sendingDisabled: true,
+		enableButtons: true,
+		primaryText: "Retry",
+		secondaryText: "Skip",
+		primaryAction: "approve",
+		secondaryAction: "reject",
+	},
+	ask_final_retry: {
+		sendingDisabled: true,
+		enableButtons: true,
+		primaryText: "Retry",
+		secondaryText: "Finish Task",
+		primaryAction: "approve",
+		secondaryAction: "reject",
+	},
+	ask_check: {
+		sendingDisabled: true,
+		enableButtons: true,
+		primaryText: "Yes",
+		secondaryText: undefined,
+		primaryAction: "approve",
+		secondaryAction: undefined,
+	},
 }
 
 const errorTypes = ["api_req_failed", "mistake_limit_reached", "auto_approval_max_req_reached"]
@@ -285,6 +319,16 @@ export function getButtonConfig(message: ClineMessage | undefined, _mode: Mode =
 
 			default:
 				return BUTTON_CONFIGS.tool_approve
+
+			// Planning
+			case "ask_proceed":
+				return BUTTON_CONFIGS.ask_proceed
+			case "ask_retry":
+				return BUTTON_CONFIGS.ask_retry
+			case "ask_final_retry":
+				return BUTTON_CONFIGS.ask_final_retry
+			case "ask_check":
+				return BUTTON_CONFIGS.ask_check
 		}
 	}
 

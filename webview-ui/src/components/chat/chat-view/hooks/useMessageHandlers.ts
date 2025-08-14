@@ -59,6 +59,10 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 						case "new_task":
 						case "condense":
 						case "report_bug":
+						case "ask_proceed":
+						case "ask_retry":
+						case "ask_final_retry":
+						case "ask_check":
 							await TaskServiceClient.askResponse(
 								AskResponseRequest.create({
 									responseType: "messageResponse",
@@ -230,8 +234,11 @@ export function useMessageHandlers(messages: ClineMessage[], chatState: ChatStat
 				case "Run Command":
 				case "Retry":
 				case "Switch to Act Mode":
+				case "Yes":
 					actionType = "approve"
 					break
+				case "Skip":
+				case "Finish Task":
 				case "Reject":
 					actionType = "reject"
 					break

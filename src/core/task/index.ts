@@ -62,7 +62,6 @@ import { getGitRemoteUrls, getLatestGitCommitHash } from "@utils/git"
 import { arePathsEqual, getDesktopDir } from "@utils/path"
 import cloneDeep from "clone-deep"
 import { execa } from "execa"
-import { readFile, unlink as removeFile } from "fs/promises"
 import pTimeout from "p-timeout"
 import pWaitFor from "p-wait-for"
 import * as path from "path"
@@ -76,27 +75,28 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { ensureLocalClineDirExists } from "../context/instructions/user-instructions/rule-helpers"
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
-import { buildPhasePrompt } from "../planning/build_prompt"
-// planning
-import {
-	PhaseStatus,
-	PhaseTracker,
-	ProjectOverview,
-	parsePlanFromFixedFile,
-	parsePlanFromOutput,
-} from "../planning/phase-tracker"
-import { PROMPTS } from "../planning/planning_prompt"
-import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { CacheService } from "../storage/CacheService"
 import { FocusChainManager } from "./focus-chain"
 import { MessageStateHandler, SessionBasedConversationHistory } from "./message-state"
 import { showChangedFilesDiff } from "./multifile-diff"
-// refinePrompt
-import { refinePrompt } from "./prompt-refinement"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
+// planning
+import {
+	PhaseTracker,
+	parsePlanFromOutput,
+	parsePlanFromFixedFile,
+	PhaseStatus,
+	ProjectOverview,
+} from "../planning/phase-tracker"
+import { buildPhasePrompt } from "../planning/build_prompt"
+import { PROMPTS } from "../planning/planning_prompt"
+import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
+// refinePrompt
+import { refinePrompt } from "./prompt-refinement"
+import { readFile, unlink as removeFile } from "fs/promises"
 
 export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
 type UserContent = Array<Anthropic.ContentBlockParam>

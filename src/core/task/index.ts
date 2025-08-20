@@ -1018,7 +1018,7 @@ export class Task {
 					console.log(
 						`[Task] Applying prompt refinement... (attempt ${refinementAttempts + 1}/${MAX_REFINEMENT_RETRIES + 1})`,
 					)
-					const refinedResult = await refinePrompt(task, this.api, this)
+					let refinedResult = await refinePrompt(task, this.api, this)
 
 					if (refinedResult.success && refinedResult.fileUri) {
 						task = refinedResult.refinedPrompt
@@ -1087,7 +1087,7 @@ export class Task {
 			}
 		}
 
-		const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
+		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
@@ -2261,7 +2261,7 @@ export class Task {
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
 		// Pass customInstructions to SYSTEM_PROMPT - it will handle whether to use modular or legacy system
-		const systemPrompt = await buildSystemPrompt(
+		let systemPrompt = await buildSystemPrompt(
 			this.cwd,
 			supportsBrowserUse,
 			this.mcpHub,

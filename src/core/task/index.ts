@@ -62,6 +62,7 @@ import { getGitRemoteUrls, getLatestGitCommitHash } from "@utils/git"
 import { arePathsEqual, getDesktopDir } from "@utils/path"
 import cloneDeep from "clone-deep"
 import { execa } from "execa"
+import { readFile, unlink as removeFile } from "fs/promises"
 import pTimeout from "p-timeout"
 import pWaitFor from "p-wait-for"
 import * as path from "path"
@@ -75,28 +76,27 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { ensureLocalClineDirExists } from "../context/instructions/user-instructions/rule-helpers"
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
+import { buildPhasePrompt } from "../planning/build_prompt"
+// planning
+import {
+	PhaseStatus,
+	PhaseTracker,
+	ProjectOverview,
+	parsePlanFromFixedFile,
+	parsePlanFromOutput,
+} from "../planning/phase-tracker"
+import { PROMPTS } from "../planning/planning_prompt"
+import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { CacheService } from "../storage/CacheService"
 import { FocusChainManager } from "./focus-chain"
-import { MessageStateHandler } from "./message-state"
+import { MessageStateHandler, SessionBasedConversationHistory } from "./message-state"
 import { showChangedFilesDiff } from "./multifile-diff"
+// refinePrompt
+import { refinePrompt } from "./prompt-refinement"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
-// planning
-import {
-	PhaseTracker,
-	parsePlanFromOutput,
-	parsePlanFromFixedFile,
-	PhaseStatus,
-	ProjectOverview,
-} from "../planning/phase-tracker"
-import { buildPhasePrompt } from "../planning/build_prompt"
-import { PROMPTS } from "../planning/planning_prompt"
-import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
-// refinePrompt
-import { refinePrompt } from "./prompt-refinement"
-import { readFile, unlink as removeFile } from "fs/promises"
 
 export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
 type UserContent = Array<Anthropic.ContentBlockParam>
@@ -156,6 +156,7 @@ export class Task {
 
 	// Message and conversation state
 	messageStateHandler: MessageStateHandler
+	modeBasedConversationHistory: SessionBasedConversationHistory
 	// conversationHistoryDeletedRange?: [number, number]
 	apiConversationHistory: Anthropic.MessageParam[] = []
 	clineMessages: ClineMessage[] = []
@@ -263,6 +264,8 @@ export class Task {
 			taskIsFavorited: this.taskIsFavorited,
 			updateTaskHistory: this.updateTaskHistory,
 		})
+
+		this.modeBasedConversationHistory = new SessionBasedConversationHistory()
 
 		// Initialize file context tracker
 		this.fileContextTracker = new FileContextTracker(controller, this.taskId)
@@ -1015,7 +1018,7 @@ export class Task {
 					console.log(
 						`[Task] Applying prompt refinement... (attempt ${refinementAttempts + 1}/${MAX_REFINEMENT_RETRIES + 1})`,
 					)
-					let refinedResult = await refinePrompt(task, this.api, this)
+					const refinedResult = await refinePrompt(task, this.api, this)
 
 					if (refinedResult.success && refinedResult.fileUri) {
 						task = refinedResult.refinedPrompt
@@ -1084,7 +1087,7 @@ export class Task {
 			}
 		}
 
-		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
+		const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
@@ -1687,6 +1690,7 @@ export class Task {
 	private async initiateTaskLoopCaptureFirstResponse(userContent: UserContent): Promise<string> {
 		// Push user turn into conversation history
 		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
+		this.modeBasedConversationHistory.addToConversationHistory({ role: "user", content: userContent })
 
 		try {
 			const markdown = userContent.map(formatContentBlockToMarkdown).join("\n\n")
@@ -1761,6 +1765,10 @@ export class Task {
 		})
 
 		await this.messageStateHandler.addToApiConversationHistory({
+			role: "assistant",
+			content: [{ type: "text", text: assistantText }],
+		})
+		this.modeBasedConversationHistory.addToConversationHistory({
 			role: "assistant",
 			content: [{ type: "text", text: assistantText }],
 		})
@@ -2212,6 +2220,30 @@ export class Task {
 		this.taskState.didAutomaticallyRetryFailedApiRequest = true
 	}
 
+	/**
+	 * Determines the mode based on user content and conversation history
+	 * @param userContent - Current user content
+	 * @param conversationHistory - Previous conversation history from messageStateHandler
+	 * @returns Mode value (1-3 for now, will be mapped to actual modes later)
+	 */
+	private determineModeFromContent(userContent: UserContent, conversationHistory?: Anthropic.MessageParam[]): number {
+		// TODO: Implement actual mode determination logic based on:
+		// - userContent analysis (keywords, intent, complexity)
+		// - conversationHistory patterns
+		// - task context and requirements
+
+		// For now, return random value 1-3 as dummy implementation
+		const randomMode = Math.floor(Math.random() * 3) + 1
+
+		console.log(`[Task ${this.taskId}] Mode determined: ${randomMode}`, {
+			userContentLength: userContent.length,
+			conversationHistoryLength: conversationHistory?.length || 0,
+			userContentText: userContent.map((block) => (block.type === "text" ? block.text : `${block.type} block`)).join(" "),
+		})
+
+		return randomMode
+	}
+
 	async *attemptApiRequest(previousApiReqIndex: number): ApiStream {
 		// Wait for MCP servers to be connected before generating system prompt
 		await pWaitFor(() => this.mcpHub.isConnecting !== true, {
@@ -2229,7 +2261,7 @@ export class Task {
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
 		// Pass customInstructions to SYSTEM_PROMPT - it will handle whether to use modular or legacy system
-		let systemPrompt = await buildSystemPrompt(
+		const systemPrompt = await buildSystemPrompt(
 			this.cwd,
 			supportsBrowserUse,
 			this.mcpHub,
@@ -2287,7 +2319,8 @@ export class Task {
 		}
 
 		const contextManagementMetadata = await this.contextManager.getNewContextMessagesAndMetadata(
-			this.messageStateHandler.getApiConversationHistory(),
+			// this.messageStateHandler.getApiConversationHistory(),
+			this.modeBasedConversationHistory.getConversationHistory(),
 			this.messageStateHandler.getClineMessages(),
 			this.api,
 			this.taskState.conversationHistoryDeletedRange,
@@ -2638,6 +2671,12 @@ export class Task {
 		// Save checkpoint if this is the first API request
 		const isFirstRequest = this.messageStateHandler.getClineMessages().filter((m) => m.say === "api_req_started").length === 0
 
+		// Determine mode based on user content and conversation history
+		const determinedMode = this.determineModeFromContent(userContent, this.messageStateHandler.getApiConversationHistory())
+
+		// Update mode-based conversation history with the determined mode
+		this.modeBasedConversationHistory.setCurrentMode(determinedMode)
+
 		// getting verbose details is an expensive operation, it uses globby to top-down build file structure of project which for large projects can take a few seconds
 		// for the best UX we show a placeholder api_req_started message with a loading spinner as this happens
 		await this.say(
@@ -2810,6 +2849,10 @@ export class Task {
 			role: "user",
 			content: userContent,
 		})
+		this.modeBasedConversationHistory.addToConversationHistory({
+			role: "user",
+			content: userContent,
+		})
 
 		telemetryService.captureConversationTurnEvent(this.ulid, providerId, modelId, "user")
 
@@ -2846,6 +2889,21 @@ export class Task {
 
 				// Let assistant know their response was interrupted for when task is resumed
 				await this.messageStateHandler.addToApiConversationHistory({
+					role: "assistant",
+					content: [
+						{
+							type: "text",
+							text:
+								assistantMessage +
+								`\n\n[${
+									cancelReason === "streaming_failed"
+										? "Response interrupted by API Error"
+										: "Response interrupted by user"
+								}]`,
+						},
+					],
+				})
+				this.modeBasedConversationHistory.addToConversationHistory({
 					role: "assistant",
 					content: [
 						{
@@ -3059,6 +3117,10 @@ export class Task {
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
+				this.modeBasedConversationHistory.addToConversationHistory({
+					role: "assistant",
+					content: [{ type: "text", text: assistantMessage }],
+				})
 
 				// NOTE: this comment is here for future reference - this was a workaround for userMessageContent not getting set to true. It was due to it not recursively calling for partial blocks when didRejectTool, so it would get stuck waiting for a partial block to complete before it could continue.
 				// in case the content blocks finished
@@ -3096,6 +3158,15 @@ export class Task {
 					"Unexpected API Response: The language model did not provide any assistant messages. This may indicate an issue with the API or the model's output.",
 				)
 				await this.messageStateHandler.addToApiConversationHistory({
+					role: "assistant",
+					content: [
+						{
+							type: "text",
+							text: "Failure: I did not provide a response.",
+						},
+					],
+				})
+				this.modeBasedConversationHistory.addToConversationHistory({
 					role: "assistant",
 					content: [
 						{

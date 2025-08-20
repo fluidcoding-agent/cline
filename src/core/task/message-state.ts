@@ -22,6 +22,117 @@ interface MessageStateHandlerParams {
 	checkpointTrackerErrorMessage?: string
 }
 
+/**
+ * 세션별로 대화 기록을 분리해서 관리
+ * 모드가 바뀔 때마다 새로운 세션이 생성되어 별도의 대화 기록을 유지함
+ */
+export class SessionBasedConversationHistory {
+	private sessionHistories: {
+		sessionId: number
+		mode: number
+		messages: Anthropic.MessageParam[]
+	}[] = []
+	private currentSessionId: number = 0
+	private currentMode: number | null = null
+
+	constructor() {}
+
+	// 현재 모드를 가져옴
+	getCurrentMode(): number | null {
+		return this.currentMode
+	}
+
+	/**
+	 * 현재 모드를 설정하고 필요시 새 세션을 생성
+	 * 모드가 바뀔 때마다 새로운 세션이 생성되어 별도의 대화 기록을 유지함
+	 */
+	setCurrentMode(mode: number): void {
+		if (this.currentMode === null) {
+			// 처음으로 모드를 설정하는 경우
+			this.currentMode = mode
+			this.currentSessionId = 1
+			this.sessionHistories.push({
+				sessionId: this.currentSessionId,
+				mode: mode,
+				messages: [],
+			})
+		} else if (mode !== this.currentMode) {
+			this.currentMode = mode
+			this.currentSessionId++
+
+			// 새로운 세션 생성
+			this.sessionHistories.push({
+				sessionId: this.currentSessionId,
+				mode: mode,
+				messages: [],
+			})
+		}
+	}
+
+	/**
+	 * 특정 세션의 대화 기록을 가져옴
+	 * 세션이 존재하지 않으면 빈 배열 반환
+	 */
+	getConversationHistory(sessionId?: number): Anthropic.MessageParam[] {
+		const targetSessionId = sessionId || this.currentSessionId
+		if (targetSessionId <= 0) {
+			return []
+		}
+		const session = this.sessionHistories.find((s) => s.sessionId === targetSessionId)
+		return session?.messages || []
+	}
+
+	// 현재 세션의 대화 기록을 가져옴
+	getCurrentConversationHistory(): Anthropic.MessageParam[] {
+		if (this.currentSessionId <= 0) {
+			return []
+		}
+		return this.getConversationHistory(this.currentSessionId)
+	}
+
+	// 현재 세션의 대화 기록에 메시지 추가
+	addToConversationHistory(message: Anthropic.MessageParam): void {
+		if (this.currentSessionId <= 0) {
+			// console.warn(`[SessionBasedConversationHistory] 메시지를 추가할 수 없음: 세션이 설정되지 않음`)
+			return
+		}
+		const currentSession = this.sessionHistories.find((s) => s.sessionId === this.currentSessionId)
+		if (currentSession) {
+			currentSession.messages.push(message)
+			// console.log(`[SessionBasedConversationHistory] 세션 ${this.currentSessionId} (모드 ${currentSession.mode})에 메시지 추가됨, 총 메시지 수: ${currentSession.messages.length}`)
+		}
+	}
+
+	// 모든 대화 기록을 지움
+	clearAllConversationHistories(): void {
+		this.sessionHistories = []
+		this.currentSessionId = 0
+		this.currentMode = null
+	}
+
+	/**
+	 * 세션 순서별로 대화 기록을 가져옴 (1번째, 2번째, 3번째 세션)
+	 * @param sessionOrder - 세션 순서 (1은 첫 번째 세션, 2는 두 번째 세션, 등등)
+	 * @returns { mode: number; messages: Anthropic.MessageParam[] } 또는 유효하지 않으면 null
+	 */
+	getConversationHistoryBySessionOrder(sessionOrder: number): { mode: number; messages: Anthropic.MessageParam[] } | null {
+		if (sessionOrder <= 0 || sessionOrder > this.sessionHistories.length) {
+			return null
+		}
+
+		const session = this.sessionHistories[sessionOrder - 1]
+		return {
+			mode: session.mode,
+			messages: session.messages,
+		}
+	}
+
+	// 총 대화 세션 수를 가져옴
+	getTotalSessionCount(): number {
+		return this.sessionHistories.length
+	}
+}
+
 export class MessageStateHandler {
 	private apiConversationHistory: Anthropic.MessageParam[] = []
 	private clineMessages: ClineMessage[] = []

@@ -2674,6 +2674,12 @@ export class Task {
 		// Determine mode based on user content and conversation history
 		const determinedMode = this.determineModeFromContent(userContent, this.messageStateHandler.getApiConversationHistory())
 
+		// Check if the determined mode is different from the current mode
+		const currentMode = this.modeBasedConversationHistory.getCurrentMode()
+		if (currentMode !== determinedMode) {
+			this.taskState.conversationHistoryDeletedRange = undefined // reset conversation history deleted range since mode changed
+		}
+
 		// Update mode-based conversation history with the determined mode
 		this.modeBasedConversationHistory.setCurrentMode(determinedMode)
 

@@ -90,7 +90,7 @@ import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParse
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { CacheService } from "../storage/CacheService"
 import { FocusChainManager } from "./focus-chain"
-import { MessageStateHandler, SessionBasedConversationHistory } from "./message-state"
+import { MessageStateHandler } from "./message-state"
 import { showChangedFilesDiff } from "./multifile-diff"
 // refinePrompt
 import { refinePrompt } from "./prompt-refinement"

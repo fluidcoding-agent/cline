@@ -1,9 +1,9 @@
-import { ApiHandler } from "@api/index"
-import { HostProvider } from "@/hosts/host-provider"
+import { ApiHandler } from "@core/api"
 import { findLastIndex } from "@shared/array"
 import { ClineApiReqInfo, ClineAskQuestion, ClineMessage } from "@shared/ExtensionMessage"
-import { writeFile } from "@/utils/fs"
 import * as vscode from "vscode"
+import { HostProvider } from "@/hosts/host-provider"
+import { writeFile } from "@/utils/fs"
 
 export interface FollowUpQuestion {
 	question: string

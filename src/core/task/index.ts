@@ -1,3 +1,4 @@
+import { todo } from "node:test"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { Anthropic } from "@anthropic-ai/sdk"
 import { ApiHandler, buildApiHandler } from "@core/api"
@@ -62,6 +63,7 @@ import { getGitRemoteUrls, getLatestGitCommitHash } from "@utils/git"
 import { arePathsEqual, getDesktopDir } from "@utils/path"
 import cloneDeep from "clone-deep"
 import { execa } from "execa"
+import { readFile, unlink as removeFile } from "fs/promises"
 import pTimeout from "p-timeout"
 import pWaitFor from "p-wait-for"
 import * as path from "path"
@@ -75,28 +77,28 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { ensureLocalClineDirExists } from "../context/instructions/user-instructions/rule-helpers"
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
+import { buildPhasePrompt } from "../planning/build_prompt"
+// planning
+import {
+	PhaseStatus,
+	PhaseTracker,
+	ProjectOverview,
+	parsePlanFromFixedFile,
+	parsePlanFromOutput,
+} from "../planning/phase-tracker"
+import { PROMPTS } from "../planning/planning_prompt"
+import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { CacheService } from "../storage/CacheService"
 import { FocusChainManager } from "./focus-chain"
+import { parseFocusChainListCounts } from "./focus-chain/utils"
 import { MessageStateHandler, SessionBasedConversationHistory } from "./message-state"
 import { showChangedFilesDiff } from "./multifile-diff"
+// refinePrompt
+import { refinePrompt } from "./prompt-refinement"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
-// planning
-import {
-	PhaseTracker,
-	parsePlanFromOutput,
-	parsePlanFromFixedFile,
-	PhaseStatus,
-	ProjectOverview,
-} from "../planning/phase-tracker"
-import { buildPhasePrompt } from "../planning/build_prompt"
-import { PROMPTS } from "../planning/planning_prompt"
-import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
-// refinePrompt
-import { refinePrompt } from "./prompt-refinement"
-import { readFile, unlink as removeFile } from "fs/promises"
 
 export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
 type UserContent = Array<Anthropic.ContentBlockParam>
@@ -135,6 +137,7 @@ export class Task {
 
 	// Focus Chain
 	private FocusChainManager?: FocusChainManager
+	private lastWorkingTodoItem?: string
 
 	// Callbacks
 	private updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
@@ -156,7 +159,7 @@ export class Task {
 
 	// Message and conversation state
 	messageStateHandler: MessageStateHandler
-	modeBasedConversationHistory: SessionBasedConversationHistory
+	subTaskBasedConversationHistory: SessionBasedConversationHistory
 	// conversationHistoryDeletedRange?: [number, number]
 	apiConversationHistory: Anthropic.MessageParam[] = []
 	clineMessages: ClineMessage[] = []
@@ -265,7 +268,7 @@ export class Task {
 			updateTaskHistory: this.updateTaskHistory,
 		})
 
-		this.modeBasedConversationHistory = new SessionBasedConversationHistory()
+		this.subTaskBasedConversationHistory = new SessionBasedConversationHistory()
 
 		// Initialize file context tracker
 		this.fileContextTracker = new FileContextTracker(controller, this.taskId)
@@ -1018,7 +1021,7 @@ export class Task {
 					console.log(
 						`[Task] Applying prompt refinement... (attempt ${refinementAttempts + 1}/${MAX_REFINEMENT_RETRIES + 1})`,
 					)
-					let refinedResult = await refinePrompt(task, this.api, this)
+					const refinedResult = await refinePrompt(task, this.api, this)
 
 					if (refinedResult.success && refinedResult.fileUri) {
 						task = refinedResult.refinedPrompt
@@ -1087,7 +1090,7 @@ export class Task {
 			}
 		}
 
-		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
+		const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
@@ -1690,7 +1693,7 @@ export class Task {
 	private async initiateTaskLoopCaptureFirstResponse(userContent: UserContent): Promise<string> {
 		// Push user turn into conversation history
 		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
-		this.modeBasedConversationHistory.addToConversationHistory({ role: "user", content: userContent })
+		this.subTaskBasedConversationHistory.addToConversationHistory({ role: "user", content: userContent })
 
 		try {
 			const markdown = userContent.map(formatContentBlockToMarkdown).join("\n\n")
@@ -1768,7 +1771,7 @@ export class Task {
 			role: "assistant",
 			content: [{ type: "text", text: assistantText }],
 		})
-		this.modeBasedConversationHistory.addToConversationHistory({
+		this.subTaskBasedConversationHistory.addToConversationHistory({
 			role: "assistant",
 			content: [{ type: "text", text: assistantText }],
 		})
@@ -2261,7 +2264,7 @@ export class Task {
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
 		// Pass customInstructions to SYSTEM_PROMPT - it will handle whether to use modular or legacy system
-		let systemPrompt = await buildSystemPrompt(
+		const systemPrompt = await buildSystemPrompt(
 			this.cwd,
 			supportsBrowserUse,
 			this.mcpHub,
@@ -2320,7 +2323,7 @@ export class Task {
 
 		const contextManagementMetadata = await this.contextManager.getNewContextMessagesAndMetadata(
 			// this.messageStateHandler.getApiConversationHistory(),
-			this.modeBasedConversationHistory.getConversationHistory(),
+			this.subTaskBasedConversationHistory.getConversationHistory(),
 			this.messageStateHandler.getClineMessages(),
 			this.api,
 			this.taskState.conversationHistoryDeletedRange,
@@ -2671,17 +2674,11 @@ export class Task {
 		// Save checkpoint if this is the first API request
 		const isFirstRequest = this.messageStateHandler.getClineMessages().filter((m) => m.say === "api_req_started").length === 0
 
-		// Determine mode based on user content and conversation history
-		const determinedMode = this.determineModeFromContent(userContent, this.messageStateHandler.getApiConversationHistory())
-
-		// Check if the determined mode is different from the current mode
-		const currentMode = this.modeBasedConversationHistory.getCurrentMode()
-		if (currentMode !== determinedMode) {
+		const todoListStatus = this.checkCurrentTodoListStatus()
+		if (todoListStatus.isNewItem) {
 			this.taskState.conversationHistoryDeletedRange = undefined // reset conversation history deleted range since mode changed
+			this.subTaskBasedConversationHistory.setCurrentTodoItemIndex(todoListStatus.currentItemIndex)
 		}
-
-		// Update mode-based conversation history with the determined mode
-		this.modeBasedConversationHistory.setCurrentMode(determinedMode)
 
 		// getting verbose details is an expensive operation, it uses globby to top-down build file structure of project which for large projects can take a few seconds
 		// for the best UX we show a placeholder api_req_started message with a loading spinner as this happens
@@ -2855,7 +2852,7 @@ export class Task {
 			role: "user",
 			content: userContent,
 		})
-		this.modeBasedConversationHistory.addToConversationHistory({
+		this.subTaskBasedConversationHistory.addToConversationHistory({
 			role: "user",
 			content: userContent,
 		})
@@ -2909,7 +2906,7 @@ export class Task {
 						},
 					],
 				})
-				this.modeBasedConversationHistory.addToConversationHistory({
+				this.subTaskBasedConversationHistory.addToConversationHistory({
 					role: "assistant",
 					content: [
 						{
@@ -3123,7 +3120,7 @@ export class Task {
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
-				this.modeBasedConversationHistory.addToConversationHistory({
+				this.subTaskBasedConversationHistory.addToConversationHistory({
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
@@ -3172,7 +3169,7 @@ export class Task {
 						},
 					],
 				})
-				this.modeBasedConversationHistory.addToConversationHistory({
+				this.subTaskBasedConversationHistory.addToConversationHistory({
 					role: "assistant",
 					content: [
 						{
@@ -3476,5 +3473,30 @@ export class Task {
 		}
 
 		return `<environment_details>\n${details.trim()}\n</environment_details>`
+	}
+
+	private checkCurrentTodoListStatus(): { isNewItem: boolean; currentItemIndex: number } {
+		if (!this.FocusChainManager || !this.taskState.currentFocusChainChecklist) {
+			return { isNewItem: false, currentItemIndex: -1 }
+		}
+
+		const { totalItems, completedItems } = parseFocusChainListCounts(this.taskState.currentFocusChainChecklist)
+
+		const todoLines = this.taskState.currentFocusChainChecklist.split("\n")
+		const incompleteItems = todoLines
+			.filter((line) => line.trim().startsWith("- [ ]"))
+			.map((line) => line.trim().replace("- [ ]", "").trim())
+
+		const currentItemIndex = completedItems + 1
+
+		const currentFirstIncompleteItem = incompleteItems.length > 0 ? incompleteItems[0] : undefined
+		const isNewItem = currentFirstIncompleteItem !== this.lastWorkingTodoItem
+
+		this.lastWorkingTodoItem = currentFirstIncompleteItem
+
+		return {
+			isNewItem: isNewItem,
+			currentItemIndex: currentItemIndex,
+		}
 	}
 }

@@ -24,46 +24,46 @@ interface MessageStateHandlerParams {
 
 /**
  * 세션별로 대화 기록을 분리해서 관리
- * 모드가 바뀔 때마다 새로운 세션이 생성되어 별도의 대화 기록을 유지함
+ * Todo 아이템이 바뀔 때마다 새로운 세션이 생성되어 별도의 대화 기록을 유지함
  */
 export class SessionBasedConversationHistory {
 	private sessionHistories: {
 		sessionId: number
-		mode: number
+		todoItemIndex: number
 		messages: Anthropic.MessageParam[]
 	}[] = []
 	private currentSessionId: number = 0
-	private currentMode: number | null = null
+	private currentTodoItemIndex: number | null = null // todo item index
 
-	constructor() {}
+	constructor() {
+		this.currentSessionId = 1
+		this.currentTodoItemIndex = 0
+		this.sessionHistories.push({
+			sessionId: this.currentSessionId,
+			todoItemIndex: this.currentTodoItemIndex,
+			messages: [],
+		})
+	}
 
-	// 현재 모드를 가져옴
-	getCurrentMode(): number | null {
-		return this.currentMode
+	// 현재 Todo 아이템 인덱스를 가져옴
+	getCurrentTodoItemIndex(): number | null {
+		return this.currentTodoItemIndex
 	}
 
 	/**
-	 * 현재 모드를 설정하고 필요시 새 세션을 생성
-	 * 모드가 바뀔 때마다 새로운 세션이 생성되어 별도의 대화 기록을 유지함
+	 * 현재 Todo 아이템 인덱스를 설정하고 필요시 새 세션을 생성
+	 * Todo 아이템이 바뀔 때마다 새로운 세션이 생성되어 별도의 대화 기록을 유지함
 	 */
-	setCurrentMode(mode: number): void {
-		if (this.currentMode === null) {
-			// 처음으로 모드를 설정하는 경우
-			this.currentMode = mode
-			this.currentSessionId = 1
-			this.sessionHistories.push({
-				sessionId: this.currentSessionId,
-				mode: mode,
-				messages: [],
-			})
-		} else if (mode !== this.currentMode) {
-			this.currentMode = mode
+	setCurrentTodoItemIndex(todoItemIndex: number): void {
+		if (this.currentTodoItemIndex !== todoItemIndex) {
+			// Todo 아이템이 바뀌면 새로운 세션 생성
+			this.currentTodoItemIndex = todoItemIndex
 			this.currentSessionId++
 
-			// 새로운 세션 생성
+			// 새로운 세션을 추가
 			this.sessionHistories.push({
 				sessionId: this.currentSessionId,
-				mode: mode,
+				todoItemIndex: todoItemIndex,
 				messages: [],
 			})
 		}
@@ -75,54 +75,45 @@ export class SessionBasedConversationHistory {
 	 */
 	getConversationHistory(sessionId?: number): Anthropic.MessageParam[] {
 		const targetSessionId = sessionId || this.currentSessionId
-		if (targetSessionId <= 0) {
-			return []
-		}
 		const session = this.sessionHistories.find((s) => s.sessionId === targetSessionId)
 		return session?.messages || []
 	}
 
 	// 현재 세션의 대화 기록을 가져옴
 	getCurrentConversationHistory(): Anthropic.MessageParam[] {
-		if (this.currentSessionId <= 0) {
-			return []
-		}
 		return this.getConversationHistory(this.currentSessionId)
 	}
 
 	// 현재 세션의 대화 기록에 메시지 추가
 	addToConversationHistory(message: Anthropic.MessageParam): void {
-		if (this.currentSessionId <= 0) {
-			// console.warn(`[SessionBasedConversationHistory] 메시지를 추가할 수 없음: 세션이 설정되지 않음`)
-			return
-		}
 		const currentSession = this.sessionHistories.find((s) => s.sessionId === this.currentSessionId)
 		if (currentSession) {
 			currentSession.messages.push(message)
-			// console.log(`[SessionBasedConversationHistory] 세션 ${this.currentSessionId} (모드 ${currentSession.mode})에 메시지 추가됨, 총 메시지 수: ${currentSession.messages.length}`)
 		}
 	}
 
 	// 모든 대화 기록을 지움
 	clearAllConversationHistories(): void {
 		this.sessionHistories = []
-		this.currentSessionId = 0
-		this.currentMode = null
+		this.currentSessionId = 1
+		this.currentTodoItemIndex = null
 	}
 
 	/**
 	 * 세션 순서별로 대화 기록을 가져옴 (1번째, 2번째, 3번째 세션)
 	 * @param sessionOrder - 세션 순서 (1은 첫 번째 세션, 2는 두 번째 세션, 등등)
-	 * @returns { mode: number; messages: Anthropic.MessageParam[] } 또는 유효하지 않으면 null
+	 * @returns { todoItemIndex: number; messages: Anthropic.MessageParam[] } 또는 유효하지 않으면 null
 	 */
-	getConversationHistoryBySessionOrder(sessionOrder: number): { mode: number; messages: Anthropic.MessageParam[] } | null {
+	getConversationHistoryBySessionOrder(
+		sessionOrder: number,
+	): { todoItemIndex: number; messages: Anthropic.MessageParam[] } | null {
 		if (sessionOrder <= 0 || sessionOrder > this.sessionHistories.length) {
 			return null
 		}
 
 		const session = this.sessionHistories[sessionOrder - 1]
 		return {
-			mode: session.mode,
+			todoItemIndex: session.todoItemIndex,
 			messages: session.messages,
 		}
 	}

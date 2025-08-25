@@ -1278,12 +1278,6 @@ export class PhaseTracker {
 		try {
 			// 1) Determine the base URI for saving
 			const baseUri = await this.getBaseUri(this.controller)
-
-			// 2) Create the .cline directory if it doesn't exist
-			if (!(await fileExistsAtPath(baseUri.fsPath))) {
-				await createDirectoriesForFile(baseUri.fsPath)
-			}
-
 			// 3) Prepare checkpoint data
 			const checkpointData: Record<string, any> = {
 				projOverview: this.projOverview, // string (original)
@@ -1296,6 +1290,10 @@ export class PhaseTracker {
 
 			// Simply use the method which already computes the proper URI
 			const checkpointUri = await this.getCheckpointFileUri()
+			// Create the .cline directory if it doesn't exist
+			if (!(await fileExistsAtPath(baseUri.fsPath))) {
+				await createDirectoriesForFile(checkpointUri.fsPath)
+			}
 			const tmpUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json.tmp")
 			await writeFile(tmpUri.fsPath, content)
 			await fs.rename(tmpUri.fsPath, checkpointUri.fsPath)

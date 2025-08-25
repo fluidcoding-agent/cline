@@ -317,9 +317,6 @@ export function getButtonConfig(message: ClineMessage | undefined, _mode: Mode =
 			case "report_bug":
 				return BUTTON_CONFIGS.report_bug
 
-			default:
-				return BUTTON_CONFIGS.tool_approve
-
 			// Planning
 			case "ask_proceed":
 				return BUTTON_CONFIGS.ask_proceed
@@ -329,6 +326,9 @@ export function getButtonConfig(message: ClineMessage | undefined, _mode: Mode =
 				return BUTTON_CONFIGS.ask_final_retry
 			case "ask_check":
 				return BUTTON_CONFIGS.ask_check
+
+			default:
+				return BUTTON_CONFIGS.tool_approve
 		}
 	}
 

@@ -2,9 +2,6 @@ import { ToolArgs } from "./types"
 import "@utils/path" // Ensure toPosix is available
 
 export function getReadFile(args: ToolArgs): string {
-	const maxConcurrentReads = args.maxConcurrentReads ?? 1
-	const isMultipleReadsEnabled = maxConcurrentReads > 1
-	const partialReadsEnabled = args.partialReadsEnabled ?? false
 	const cwd = args.cwd
 
 	return `## read_file

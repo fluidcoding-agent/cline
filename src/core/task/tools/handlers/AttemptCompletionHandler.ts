@@ -12,7 +12,6 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { PROMPTS } from "../../../planning/planning_prompt"
 import { PHASE_RETRY_LIMIT } from "../../../planning/utils"
-import { buildPhasePrompt } from "../../../planning/build_prompt"
 
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = "attempt_completion"

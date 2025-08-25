@@ -1,7 +1,7 @@
 import { createTwoFilesPatch } from "diff"
 import fs from "fs/promises"
 import * as vscode from "vscode"
-import { fileExistsAtPath, writeFile } from "@/utils/fs"
+import { createDirectoriesForFile, fileExistsAtPath, writeFile } from "@/utils/fs"
 import { ParsedPlan, ProjectOverview } from "./phase-tracker"
 
 export const PHASE_RETRY_LIMIT = 2
@@ -115,13 +115,25 @@ export async function saveParsedPlanAsMarkdown(
 		const filename = `project-execution-plan-${taskId}.md`
 		const fileUri = vscode.Uri.joinPath(saveUri, filename)
 
+		console.log(`[saveParsedPlanAsMarkdown] Attempting to save plan to: ${fileUri.fsPath}`)
+		console.log(`[saveParsedPlanAsMarkdown] Base directory: ${saveUri.fsPath}`)
+		// Ensure directory structure exists before writing
+		if (!(await fileExistsAtPath(saveUri.fsPath))) {
+			await createDirectoriesForFile(fileUri.fsPath)
+		}
+
 		await writeFile(fileUri.fsPath, mdContent)
-		console.log(`[saveParsedPlanAsMarkdown] Plan saved to: ${fileUri.fsPath}`)
+		console.log(`[saveParsedPlanAsMarkdown] Plan saved successfully to: ${fileUri.fsPath}`)
 
 		const snapshotUri = await createSnapshot(fileUri, saveUri, taskId)
 		return { fileUri, snapshotUri }
 	} catch (error) {
 		console.error("[saveParsedPlanAsMarkdown] Failed to save plan:", error)
+		console.error("[saveParsedPlanAsMarkdown] Error details:", {
+			saveUri: saveUri.fsPath,
+			taskId,
+			error: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+		})
 		return { fileUri: undefined, snapshotUri: undefined }
 	}
 }
@@ -145,6 +157,8 @@ export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri, t
 	// Simple temporary file for file-locking
 	const lockUri = vscode.Uri.joinPath(baseUri, "snapshot.lock")
 	try {
+		console.log(`[createSnapshot] Creating snapshot: ${snapshotUri.fsPath}`)
+
 		// Prevent other processes from creating it first
 		await writeFile(lockUri.fsPath, "")
 		const content = await fs.readFile(planUri.fsPath, "utf8")
@@ -160,7 +174,11 @@ export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri, t
 			console.warn("[createSnapshot] Could not set read-only permissions:", permissionError)
 		}
 
+		console.log(`[createSnapshot] Snapshot created successfully: ${snapshotUri.fsPath}`)
 		return snapshotUri
+	} catch (error) {
+		console.error("[createSnapshot] Failed to create snapshot:", error)
+		throw error
 	} finally {
 		// Release lock
 		try {
@@ -223,7 +241,7 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 	lines.push(`> **Total Phases**: ${plan.phases.length}`)
 	lines.push("")
 
-	plan.phases.forEach((phase, _) => {
+	plan.phases.forEach((phase) => {
 		lines.push(`### Phase ${phase.phaseIdx}: ${phase.title}`)
 		lines.push("")
 

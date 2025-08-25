@@ -1,5 +1,3 @@
-import os from "os"
-
 export function getRulesSection(cwd: string, supportsBrowserUse: boolean): string {
 	return `====
 

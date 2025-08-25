@@ -254,7 +254,7 @@ RULES:
 - Always close all brackets and quotes properly`
 }
 
-function buildRefinementPrompt(projectSpecificationFormat: string, requiredFields: string[], optionalFields: string[]): string {
+function buildRefinementPrompt(projectSpecificationFormat: string, requiredFields: string[]): string {
 	return `You are a web project specification expert. Create a comprehensive project specification based on the provided information.
 
 ${projectSpecificationFormat}
@@ -369,7 +369,7 @@ User Request: "${prompt}"
 Please extract available information, identify missing required elements, and generate follow-up questions if needed.`
 	} else {
 		// 2단계: 개선된 프롬프트 생성
-		systemPrompt = buildRefinementPrompt(projectSpecificationFormat, requiredFields, optionalFields)
+		systemPrompt = buildRefinementPrompt(projectSpecificationFormat, requiredFields)
 		userMessage = `Create a comprehensive project specification based on the following information:
 
 User Request: "${prompt}"

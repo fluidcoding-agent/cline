@@ -1,4 +1,4 @@
-import { Phase, Subtask, ProjectOverview } from "./phase-tracker"
+import { Phase, ProjectOverview } from "./phase-tracker"
 
 /**
  * Build the system / user prompt that will be fed to the LLM for one *execution*

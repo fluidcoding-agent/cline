@@ -1,9 +1,9 @@
+import fs from "fs/promises"
 import * as vscode from "vscode"
 import { HostProvider } from "@/hosts/host-provider"
+import { createDirectoriesForFile, fileExistsAtPath, writeFile } from "@/utils/fs"
 import { Controller } from "../controller"
 import { extractTag, extractTagAsLines, PHASE_RETRY_LIMIT } from "./utils"
-import { writeFile, fileExistsAtPath, createDirectoriesForFile } from "@/utils/fs"
-import fs from "fs/promises"
 
 export enum PhaseStatus {
 	Pending = "pending",
@@ -364,7 +364,7 @@ function filterSubtasksByPattern(subtasks: Subtask[], pattern: RegExp): Subtask[
 }
 
 function extractRequirement(source: string): string[] {
-	const re = new RegExp(`<related_input_requirements>\\s*([\\s\\S]*?)\\s*</related_input_requirements>`, "i")
+	const re = /<related_input_requirements>\s*([\s\S]*?)\s*<\/related_input_requirements>/i
 	const match = source.match(re)
 	const requirements = match ? match[1].trim() : ""
 
@@ -599,7 +599,7 @@ export function parsePhaseByMD(raw: string): Phase[] {
 
 		// Index calculation
 		const phaseIdx =
-			numberStr && !isNaN(parseInt(numberStr, 10))
+			numberStr && !Number.isNaN(parseInt(numberStr, 10))
 				? parseInt(numberStr, 10)
 				: isFinalPhase
 					? phaseSections.length
@@ -840,10 +840,7 @@ export function parsePlanFromOutput(raw: string, isMD: boolean = false): ParsedP
 
 // 새로운 함수: plan.txt 파일에서 고정된 플랜 로드
 
-export async function parsePlanFromFixedFile(
-	extensionContext: vscode.ExtensionContext,
-	controller: Controller,
-): Promise<ParsedPlan> {
+export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionContext): Promise<ParsedPlan> {
 	console.log("[parsePlanFromFixedFile] Starting to load plan.txt file...")
 	console.log("[parsePlanFromFixedFile] Extension URI:", extensionContext.extensionUri.toString())
 
@@ -913,7 +910,7 @@ export class PhaseTracker {
 		// Parse the string project overview into structured data
 		try {
 			this.parsedProjOverview = parseProjectOverviewSection(this.projOverview)
-		} catch (error) {
+		} catch {
 			// Fallback to a simple structure if parsing fails
 			this.parsedProjOverview = {
 				title: "Project Overview",
@@ -1125,7 +1122,9 @@ export class PhaseTracker {
 
 		// Function to process all checklist items in batch
 		const markChecklistDone = (subs?: Subtask[]) => {
-			subs?.forEach((s) => (s.completed = true))
+			subs?.forEach((s) => {
+				s.completed = true
+			})
 		}
 
 		// Mark all checklist items as completed
@@ -1269,7 +1268,7 @@ export class PhaseTracker {
 			tracker.isRestored = true // Mark as restored
 			// Restored phase checkpoint
 			return tracker
-		} catch (err) {
+		} catch {
 			// No phase checkpoint to restore or failed
 			return undefined
 		}
@@ -1302,7 +1301,7 @@ export class PhaseTracker {
 			await fs.rename(tmpUri.fsPath, checkpointUri.fsPath)
 
 			// Note: Plan markdown is saved during initial parsing, not during checkpoint saves
-		} catch (error) {}
+		} catch {}
 	}
 
 	public async deleteCheckpoint(): Promise<void> {
@@ -1317,7 +1316,7 @@ export class PhaseTracker {
 				return
 			}
 			console.log(`[deleteCheckpoint] Successfully deleted: ${checkpointUri.toString()}`)
-		} catch (error) {}
+		} catch {}
 	}
 
 	public async deletePlanMD(): Promise<void> {
@@ -1335,6 +1334,6 @@ export class PhaseTracker {
 				return
 			}
 			console.log(`[deletePlanMD] Successfully deleted: ${fileUri.toString()}`)
-		} catch (error) {}
+		} catch {}
 	}
 }

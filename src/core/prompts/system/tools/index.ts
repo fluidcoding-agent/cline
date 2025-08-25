@@ -1,24 +1,22 @@
 import { BrowserSettings } from "@shared/BrowserSettings"
 import { FocusChainSettings } from "@shared/FocusChainSettings"
-import { ToolArgs, ToolName, CodeIndexManager, McpHub, DiffStrategy, Experiments } from "./types"
-import { createExampleSectionForTools } from "../example"
-
-// Tool description generators
-import { getExecuteCommand } from "./execute-command"
-import { getReadFile } from "./read-file"
-import { getWriteFile } from "./write-file"
-import { getReplaceInFile } from "./replace-in-file"
-import { getSearchFile } from "./search-file"
-import { getListFile } from "./list-file"
-import { getListCodeDefinitionName } from "./list-code-definition-name"
-import { getBrowserAction } from "./browse-action"
-import { getUseMcpTool } from "./use-mcp-tool"
 import { getAccessMcpResource } from "./access-mcp-resource"
 import { getAskFollowupQuestion } from "./ask-followup-question"
 import { getAttemptCompletion } from "./attempt-completion"
+import { getBrowserAction } from "./browse-action"
+// Tool description generators
+import { getExecuteCommand } from "./execute-command"
+import { getListCodeDefinitionName } from "./list-code-definition-name"
+import { getListFile } from "./list-file"
+import { getLoadMcpDocumentation } from "./load-mcp-documentation"
 import { getNewTask } from "./new_task"
 import { getPlanModeRespond } from "./plan-mode-respond"
-import { getLoadMcpDocumentation } from "./load-mcp-documentation"
+import { getReadFile } from "./read-file"
+import { getReplaceInFile } from "./replace-in-file"
+import { getSearchFile } from "./search-file"
+import { CodeIndexManager, DiffStrategy, Experiments, McpHub, ToolArgs, ToolName } from "./types"
+import { getUseMcpTool } from "./use-mcp-tool"
+import { getWriteFile } from "./write-file"
 
 // Tool Groups for mode-based filtering
 export const TOOL_GROUPS = {
@@ -41,8 +39,7 @@ const toolDescriptionMap: Record<ToolName, (args: ToolArgs) => string | undefine
 	search_files: (args) => getSearchFile(args),
 	list_files: (args) => getListFile(args),
 	list_code_definition_names: (args) => getListCodeDefinitionName(args),
-	browser_action: (args) =>
-		args.supportsComputerUse && args.browserSettings ? getBrowserAction(args) : undefined,
+	browser_action: (args) => (args.supportsComputerUse && args.browserSettings ? getBrowserAction(args) : undefined),
 	use_mcp_tool: (args) => getUseMcpTool(args),
 	access_mcp_resource: (args) => getAccessMcpResource(args),
 	ask_followup_question: () => getAskFollowupQuestion(),
@@ -80,7 +77,7 @@ export function getToolDescriptionsForMode(
 		experiments: experiments ?? {},
 		maxConcurrentReads: settings?.maxConcurrentFileReads ?? 5,
 		toolOptions: {},
-		focusChainSettings: focusChainSettings
+		focusChainSettings: focusChainSettings,
 	}
 
 	// Get available tools based on TOOL_GROUPS and conditions

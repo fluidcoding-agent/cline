@@ -47,6 +47,9 @@ import { getReadablePath, isLocatedInWorkspace } from "@/utils/path"
 import { ToolParamName, ToolUse, ToolUseName } from "../assistant-message"
 import { constructNewFileContent } from "../assistant-message/diff"
 import { ContextManager } from "../context/context-management/ContextManager"
+import { Controller } from "../controller"
+import { PROMPTS } from "../planning/planning_prompt"
+import { PHASE_RETRY_LIMIT } from "../planning/utils"
 import { continuationPrompt } from "../prompts/contextManagement"
 import { loadMcpDocumentation } from "../prompts/loadMcpDocumentation"
 import { formatResponse } from "../prompts/responses"
@@ -57,9 +60,6 @@ import { MessageStateHandler } from "./message-state"
 import { TaskState } from "./TaskState"
 import { AutoApprove } from "./tools/autoApprove"
 import { showNotificationForApprovalIfAutoApprovalEnabled } from "./utils"
-import { Controller } from "../controller"
-import { PROMPTS } from "../planning/planning_prompt"
-import { PHASE_RETRY_LIMIT } from "../planning/utils"
 
 export class ToolExecutor {
 	private autoApprover: AutoApprove
@@ -2386,7 +2386,7 @@ export class ToolExecutor {
 							await handleCompletionResult(block)
 						}
 
-						const handlePartialPhasesComplete = async (phaseTracker: any, block: ToolUse): Promise<void> => {
+						const handlePartialPhasesComplete = async (phaseTracker: any): Promise<void> => {
 							const approveProceed = await this.sidebarController.task?.askUserApproval(
 								"ask_proceed",
 								PROMPTS.MOVE_NEXT_PHASE_ASK,
@@ -2440,7 +2440,7 @@ export class ToolExecutor {
 								await handleAllPhasesComplete(phaseTracker, block)
 								break
 							case "partial_complete":
-								await handlePartialPhasesComplete(phaseTracker, block)
+								await handlePartialPhasesComplete(phaseTracker)
 								break
 							default:
 								await handleCompletionResult(block)

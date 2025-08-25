@@ -1,22 +1,22 @@
-import { createToolsSection } from "./tools"
-import { createExampleSectionForTools } from "./example"
+import { McpHub } from "@services/mcp/McpHub"
 import { BrowserSettings } from "@shared/BrowserSettings"
 import { FocusChainSettings } from "@shared/FocusChainSettings"
-import { McpHub } from "@services/mcp/McpHub"
+import { createExampleSectionForTools } from "./example"
+import { createToolsSection } from "./tools"
 import "@utils/path"
 
 // Import all sections
 import {
-	getPersonaSection,
 	getCapabilitiesSection,
+	getEditingFilesSection,
+	getMcpServersSection,
+	getModesSection,
+	getObjectiveSection,
+	getPersonaSection,
 	getRulesSection,
 	getSystemInfoSection,
-	getObjectiveSection,
-	getToolUseGuidelinesSection,
-	getMcpServersSection,
-	getEditingFilesSection,
-	getModesSection,
 	getToolUseFormattingSection,
+	getToolUseGuidelinesSection,
 } from "./sections"
 
 // Type definition for SYSTEM_PROMPT function signature
@@ -34,7 +34,13 @@ ${getToolUseFormattingSection(focusChainSettings)}
 # Tools
 
 ${(() => {
-	const { toolDescriptions, availableTools } = createToolsSection(cwd.toPosix(), supportsBrowserUse, browserSettings, focusChainSettings, mcpHub)
+	const { toolDescriptions, availableTools } = createToolsSection(
+		cwd.toPosix(),
+		supportsBrowserUse,
+		browserSettings,
+		focusChainSettings,
+		mcpHub,
+	)
 	const exampleSection = createExampleSectionForTools(availableTools, focusChainSettings)
 	return `${toolDescriptions}${exampleSection ? "\n\n" + exampleSection : ""}`
 })()}

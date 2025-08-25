@@ -1,7 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { AssistantMessageContent } from "@core/assistant-message"
 import { ClineAskResponse } from "@shared/WebviewMessage"
-import { PhaseTracker } from "../planning/phase-tracker"
 
 export class TaskState {
 	// Streaming flags

@@ -1,8 +1,8 @@
-import * as vscode from "vscode"
 import { createTwoFilesPatch } from "diff"
-import { ParsedPlan, ProjectOverview, Subtask } from "./phase-tracker"
-import { writeFile, fileExistsAtPath } from "@/utils/fs"
 import fs from "fs/promises"
+import * as vscode from "vscode"
+import { fileExistsAtPath, writeFile } from "@/utils/fs"
+import { ParsedPlan, ProjectOverview } from "./phase-tracker"
 
 export const PHASE_RETRY_LIMIT = 2
 export const PLANNING_MAX_RETRIES = 2
@@ -223,7 +223,7 @@ export function generateMarkdownContent(plan: ParsedPlan): string {
 	lines.push(`> **Total Phases**: ${plan.phases.length}`)
 	lines.push("")
 
-	plan.phases.forEach((phase, index) => {
+	plan.phases.forEach((phase, _) => {
 		lines.push(`### Phase ${phase.phaseIdx}: ${phase.title}`)
 		lines.push("")
 

@@ -62,6 +62,7 @@ import { getGitRemoteUrls, getLatestGitCommitHash } from "@utils/git"
 import { arePathsEqual, getDesktopDir } from "@utils/path"
 import cloneDeep from "clone-deep"
 import { execa } from "execa"
+import { readFile, unlink as removeFile } from "fs/promises"
 import pTimeout from "p-timeout"
 import pWaitFor from "p-wait-for"
 import * as path from "path"
@@ -75,29 +76,22 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { ensureLocalClineDirExists } from "../context/instructions/user-instructions/rule-helpers"
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
+import { buildPhasePrompt } from "../planning/build_prompt"
+// planning
+import { PhaseStatus, PhaseTracker, parsePlanFromOutput } from "../planning/phase-tracker"
+import { PROMPTS } from "../planning/planning_prompt"
+import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { isNextGenModelFamily } from "../prompts/system-prompt/utils"
 import { StateManager } from "../storage/StateManager"
 import { FocusChainManager } from "./focus-chain"
 import { MessageStateHandler } from "./message-state"
 import { showChangedFilesDiff } from "./multifile-diff"
+// refinePrompt
+import { refinePrompt } from "./prompt-refinement"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
-// planning
-import {
-	PhaseTracker,
-	parsePlanFromOutput,
-	parsePlanFromFixedFile,
-	PhaseStatus,
-	ProjectOverview,
-} from "../planning/phase-tracker"
-import { buildPhasePrompt } from "../planning/build_prompt"
-import { PROMPTS } from "../planning/planning_prompt"
-import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
-// refinePrompt
-import { refinePrompt } from "./prompt-refinement"
-import { readFile, unlink as removeFile } from "fs/promises"
 
 export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
 type UserContent = Array<Anthropic.ContentBlockParam>
@@ -114,7 +108,6 @@ export class Task {
 
 	// Task configuration
 	private enableCheckpoints: boolean
-	private originalApiConfiguration: ApiConfiguration
 
 	// Core dependencies
 	private controller: Controller
@@ -239,7 +232,6 @@ export class Task {
 		this.useAutoCondense = useAutoCondense
 
 		this.taskState.isPhaseRoot = isPhaseRoot
-		this.originalApiConfiguration = apiConfiguration
 
 		// Set up MCP notification callback for real-time notifications
 		this.mcpHub.setNotificationCallback(async (serverName: string, _level: string, message: string) => {
@@ -461,14 +453,13 @@ export class Task {
 
 		let didWorkspaceRestoreFail = false
 
-		let phaseIdx
-		if (
-			this.sidebarController.phaseTracker &&
-			(phaseIdx = this.sidebarController.phaseTracker.getPhaseByTaskId(this.taskId)) > 0
-		) {
-			this.sidebarController.phaseTracker.resetPhaseStatus(phaseIdx)
-			this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIdx, this.taskId)
-			this.sidebarController.phaseTracker.currentPhaseIndex = phaseIdx
+		if (this.sidebarController.phaseTracker) {
+			const phaseIdx = this.sidebarController.phaseTracker.getPhaseByTaskId(this.taskId)
+			if (phaseIdx > 0) {
+				this.sidebarController.phaseTracker.resetPhaseStatus(phaseIdx)
+				this.sidebarController.phaseTracker.updateTaskIdPhase(phaseIdx, this.taskId)
+				this.sidebarController.phaseTracker.currentPhaseIndex = phaseIdx
+			}
 		}
 
 		switch (restoreType) {
@@ -1030,7 +1021,7 @@ export class Task {
 					console.log(
 						`[Task] Applying prompt refinement... (attempt ${refinementAttempts + 1}/${MAX_REFINEMENT_RETRIES + 1})`,
 					)
-					let refinedResult = await refinePrompt(task, this.api, this)
+					const refinedResult = await refinePrompt(task, this.api, this)
 
 					if (refinedResult.success && refinedResult.fileUri) {
 						task = refinedResult.refinedPrompt
@@ -1099,7 +1090,7 @@ export class Task {
 			}
 		}
 
-		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
+		const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
@@ -1726,7 +1717,6 @@ export class Task {
 		await this.say("text", "*Planning in progress...*", undefined, undefined, true)
 
 		// Track progress
-		let totalChunks = 0
 		let lastUpdateTime = Date.now()
 		const updateInterval = 250 // Update UI every 250ms to avoid too many updates
 
@@ -1740,7 +1730,6 @@ export class Task {
 				totalCost = chunk.totalCost
 			} else if (chunk.type === "text") {
 				assistantText += chunk.text
-				totalChunks++
 
 				// Update UI periodically to show progress without overwhelming it
 				const now = Date.now()
@@ -2279,7 +2268,6 @@ export class Task {
 			clineIgnoreInstructions = formatResponse.clineIgnoreInstructions(clineIgnoreContent)
 		}
 
-		let customInstructions: string | undefined
 		if (
 			globalClineRulesFileInstructions ||
 			localClineRulesFileInstructions ||
@@ -2290,7 +2278,7 @@ export class Task {
 			preferredLanguageInstructions
 		) {
 			// altering the system prompt mid-task will break the prompt cache, but in the grand scheme this will not change often so it's better to not pollute user messages with it the way we have to with <potentially relevant details>
-			customInstructions = addUserInstructions(
+			const userInstructions = addUserInstructions(
 				globalClineRulesFileInstructions,
 				localClineRulesFileInstructions,
 				localCursorRulesFileInstructions,
@@ -2299,6 +2287,7 @@ export class Task {
 				clineIgnoreInstructions,
 				preferredLanguageInstructions,
 			)
+			systemPrompt += userInstructions
 		}
 
 		const contextManagementMetadata = await this.contextManager.getNewContextMessagesAndMetadata(

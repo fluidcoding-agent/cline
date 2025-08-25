@@ -2,9 +2,9 @@ import { FocusChainSettings } from "@shared/FocusChainSettings"
 
 // Example generators
 import { getExecuteCommandExample } from "./execute-command-example"
-import { getUseMcpToolExample } from "./use-mcp-tool-example"
-import { getReplaceInFileExample } from "./replace-in-file-example"
 import { getNewTaskExample } from "./new-task-example"
+import { getReplaceInFileExample } from "./replace-in-file-example"
+import { getUseMcpToolExample } from "./use-mcp-tool-example"
 import { getWriteFileExample } from "./write-file-example"
 
 // Tool name type (should match ToolName from tools/types.ts)
@@ -44,10 +44,7 @@ export function createExampleSection(focusChainSettings: FocusChainSettings): st
  * @param availableTools Array of tool names that are available in the current mode
  * @returns Example section string, or empty string if no examples are available
  */
-export function createExampleSectionForTools(
-	availableTools: ToolName[],
-	focusChainSettings: FocusChainSettings
-): string {
+export function createExampleSectionForTools(availableTools: ToolName[], focusChainSettings: FocusChainSettings): string {
 	// Filter tools that have examples
 	const toolsWithExamples = availableTools.filter((tool) => toolExampleMap[tool])
 

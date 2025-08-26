@@ -90,6 +90,8 @@ import { PROMPTS } from "../planning/planning_prompt"
 import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { CacheService } from "../storage/CacheService"
+// condenseHistory
+import { condenseHistory } from "./condense-history"
 import { FocusChainManager } from "./focus-chain"
 import { parseFocusChainListCounts } from "./focus-chain/utils"
 import { MessageStateHandler, SessionBasedConversationHistory } from "./message-state"
@@ -2336,6 +2338,15 @@ export class Task {
 			await this.messageStateHandler.saveClineMessagesAndUpdateHistory()
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
+
+		// Todo :
+		// 1. Condense 시점 (예: Todo item이 바뀔 때 마다?)
+		// 2. Condense 할 History 파라미터의 범위
+		//   1) chat history 전체 중 일부 삭제
+		//   2) todo item 별 condense 내용을 저장?
+		// 3. Condense 방식 (시스템 프롬프트로 어떤 포맷을 요청하여 condense 할지)
+		// const condenseHistoryPrompt = await condenseHistory(contextManagementMetadata.truncatedConversationHistory, this.api, 1000)
+
 		// Use forced model if specified, otherwise use default api
 		const stream = this.api.createMessage(
 			this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePhasePlanning ? PROMPTS.PLANNING : systemPrompt,

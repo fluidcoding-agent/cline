@@ -91,7 +91,7 @@ import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParse
 import { addUserInstructions } from "../prompts/system-prompt/user-instructions/addUserInstructions"
 import { CacheService } from "../storage/CacheService"
 // condenseHistory
-import { condenseHistory } from "./condense-history"
+import { condenseHistoryWithPrompt } from "./condense-history"
 import { FocusChainManager } from "./focus-chain"
 import { parseFocusChainListCounts } from "./focus-chain/utils"
 import { MessageStateHandler, SessionBasedConversationHistory } from "./message-state"
@@ -165,6 +165,7 @@ export class Task {
 	// conversationHistoryDeletedRange?: [number, number]
 	apiConversationHistory: Anthropic.MessageParam[] = []
 	clineMessages: ClineMessage[] = []
+	condensedHistoryPrompt?: string
 
 	constructor(
 		controller: Controller,
@@ -2339,17 +2340,18 @@ export class Task {
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
 
-		// Todo :
-		// 1. Condense 시점 (예: Todo item이 바뀔 때 마다?)
-		// 2. Condense 할 History 파라미터의 범위
-		//   1) chat history 전체 중 일부 삭제
-		//   2) todo item 별 condense 내용을 저장?
-		// 3. Condense 방식 (시스템 프롬프트로 어떤 포맷을 요청하여 condense 할지)
-		// const condenseHistoryPrompt = await condenseHistory(contextManagementMetadata.truncatedConversationHistory, this.api, 1000)
+		// System prompt with condensed history for context
+		// 원할 경우 systemPrompt도 자체 프롬프트로 수정 가능 (우선 기존 시스템 프롬프트 사용)
+		let systemPromptWithContext = systemPrompt
+		if (this.condensedHistoryPrompt && this.condensedHistoryPrompt.length > 0) {
+			systemPromptWithContext += "\n\n" + this.condensedHistoryPrompt
+		}
 
-		// Use forced model if specified, otherwise use default api
 		const stream = this.api.createMessage(
-			this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePhasePlanning ? PROMPTS.PLANNING : systemPrompt,
+			// this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePhasePlanning ? PROMPTS.PLANNING : systemPrompt,
+			this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePhasePlanning
+				? PROMPTS.PLANNING
+				: systemPromptWithContext,
 			contextManagementMetadata.truncatedConversationHistory,
 		)
 
@@ -2688,6 +2690,18 @@ export class Task {
 		const todoListStatus = this.checkCurrentTodoListStatus()
 		if (todoListStatus.isNewItem) {
 			this.taskState.conversationHistoryDeletedRange = undefined // reset conversation history deleted range since mode changed
+			// Condense chat history when todo item changes
+			const condenseHistoryRange = this.subTaskBasedConversationHistory.getCurrentConversationHistory()
+
+			// 직전 사용한 condensedHistoryPrompt + 직전 currentConversationHistory 로 condense
+			const newCondensedHistoryPrompt = await condenseHistoryWithPrompt(
+				this.condensedHistoryPrompt,
+				condenseHistoryRange,
+				this.api,
+				1000,
+			)
+			this.condensedHistoryPrompt = newCondensedHistoryPrompt
+
 			this.subTaskBasedConversationHistory.setCurrentTodoItemIndex(todoListStatus.currentItemIndex)
 		}
 
